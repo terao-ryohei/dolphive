@@ -1,0 +1,38 @@
+{
+  "name": "dolphive",
+  "version": "1.0.0",
+  "description": "Discord Bot for AI Memory System - Saves AI-generated memories to GitHub",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "ai",
+    "memory",
+    "github",
+    "glm-4"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@octokit/rest": "^21.0.0",
+    "date-fns": "^3.6.0",
+    "discord.js": "^14.14.0",
+    "dotenv": "^16.4.0",
+    "openai": "^4.52.0",
+    "uuidv7": "^1.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
