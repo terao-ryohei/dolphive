@@ -9,11 +9,85 @@ export class GitHubClient {
   private octokit: Octokit;
   private owner: string;
   private repo: string;
+  private templateOwner: string | undefined;
+  private templateRepo: string | undefined;
+  private repoPrivate: boolean;
 
   constructor(config: GitHubClientConfig) {
     this.octokit = new Octokit({ auth: config.token });
     this.owner = config.owner;
     this.repo = config.repo;
+    this.templateOwner = config.templateOwner;
+    this.templateRepo = config.templateRepo;
+    this.repoPrivate = config.repoPrivate ?? true;
+  }
+
+  async repoExists(): Promise<boolean> {
+    try {
+      await this.octokit.repos.get({ owner: this.owner, repo: this.repo });
+      return true;
+    } catch (error: unknown) {
+      if (error instanceof Error && 'status' in error && (error as { status: number }).status === 404) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  async createFromTemplate(): Promise<void> {
+    if (!this.templateOwner || !this.templateRepo) {
+      throw new Error('Template owner and repo must be configured to create from template.');
+    }
+    try {
+      await this.octokit.repos.createUsingTemplate({
+        template_owner: this.templateOwner,
+        template_repo: this.templateRepo,
+        owner: this.owner,
+        name: this.repo,
+        private: this.repoPrivate,
+        description: `Created from template ${this.templateOwner}/${this.templateRepo}`,
+      });
+    } catch (error: unknown) {
+      if (error instanceof Error && 'status' in error) {
+        const status = (error as { status: number }).status;
+        if (status === 422) {
+          const alreadyExists = await this.repoExists();
+          if (alreadyExists) {
+            console.log(`Repository '${this.owner}/${this.repo}' already exists.`);
+            return;
+          }
+          throw new Error(
+            `Failed to create '${this.owner}/${this.repo}' from template ` +
+            `'${this.templateOwner}/${this.templateRepo}'. ` +
+            `Verify the template repository exists and is marked as a template.`
+          );
+        }
+        if (status === 403) {
+          throw new Error(
+            `Permission denied creating '${this.owner}/${this.repo}'. ` +
+            `Ensure your token has 'repo' scope. For org repos, Admin permission is required.`
+          );
+        }
+      }
+      throw error;
+    }
+  }
+
+  async ensureRepo(): Promise<void> {
+    const exists = await this.repoExists();
+    if (exists) return;
+
+    console.log(`Repository '${this.owner}/${this.repo}' not found. Creating from template...`);
+    await this.createFromTemplate();
+    console.log(`Repository '${this.owner}/${this.repo}' created from template.`);
+
+    const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+    for (let i = 0; i < 5; i++) {
+      await sleep(1000);
+      if (await this.repoExists()) return;
+      console.log(`Waiting for repository to become available... (${i + 1}/5)`);
+    }
+    console.warn(`Warning: Repository '${this.owner}/${this.repo}' not yet available via API. Proceeding anyway.`);
   }
 
   /**

@@ -17,6 +17,9 @@ async function main(): Promise<void> {
     token: config.github.token,
     owner: config.github.owner,
     repo: config.github.repo,
+    templateOwner: config.github.templateOwner,
+    templateRepo: config.github.templateRepo,
+    repoPrivate: config.github.repoPrivate,
   });
 
   // AI Client (GLM-4)
@@ -45,6 +48,14 @@ async function main(): Promise<void> {
 
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+  // リポジトリ存在確認（なければテンプレートから自動作成）
+  try {
+    await memoryManager.ensureRepo();
+  } catch (error) {
+    console.error('Failed to ensure repository. Exiting.', error);
+    process.exit(1);
+  }
 
   // Bot起動
   console.log('Starting bot...');

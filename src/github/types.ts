@@ -85,6 +85,9 @@ export interface GitHubClientConfig {
   owner: string;
   /** リポジトリ名 */
   repo: string;
+  templateOwner?: string;
+  templateRepo?: string;
+  repoPrivate?: boolean;
 }
 
 /**

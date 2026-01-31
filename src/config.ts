@@ -17,6 +17,9 @@ export interface AppConfig {
     token: string;
     owner: string;
     repo: string;
+    templateOwner: string;
+    templateRepo: string;
+    repoPrivate: boolean;
   };
 }
 
@@ -56,6 +59,9 @@ export function loadConfig(): AppConfig {
       token: getRequiredEnv('GITHUB_TOKEN'),
       owner: getRequiredEnv('GITHUB_OWNER'),
       repo: getRequiredEnv('GITHUB_REPO'),
+      templateOwner: getOptionalEnv('GITHUB_TEMPLATE_OWNER', 'terao-ryohei'),
+      templateRepo: getOptionalEnv('GITHUB_TEMPLATE_REPO', 'myLife'),
+      repoPrivate: ['true', '1', 'yes'].includes(getOptionalEnv('GITHUB_REPO_PRIVATE', 'true').toLowerCase()),
     },
   };
 }

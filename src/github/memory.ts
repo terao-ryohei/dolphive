@@ -24,6 +24,10 @@ export class MemoryManager {
     this.client = new GitHubClient(config);
   }
 
+  async ensureRepo(): Promise<void> {
+    await this.client.ensureRepo();
+  }
+
   /**
    * メモリを保存
    */
