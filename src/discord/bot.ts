@@ -1,7 +1,24 @@
-import { Client, GatewayIntentBits, Message, TextChannel, Partials } from 'discord.js';
-import type { MemoryManager } from '../github/index.js';
+import {
+  Client,
+  GatewayIntentBits,
+  Message,
+  TextChannel,
+  Partials,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ComponentType,
+  PermissionFlagsBits,
+  ChannelType,
+} from 'discord.js';
+import type { MemoryManager, CreateMemoryInput } from '../github/index.js';
+import type { MemoryCategory } from '../github/types.js';
 import type { AIClient, ConversationMessage } from '../ai/index.js';
+import type { GeneratedMemory } from '../ai/types.js';
 import { CommandHandler } from './commands.js';
+import { detectCategoryFromChannel } from './channel-category.js';
+import { registerCommands, handleSearchInteraction, handleSearchButton } from './slash-commands.js';
 import type { BotConfig, BotState, MessageContext } from './types.js';
 
 /**
@@ -14,6 +31,7 @@ export class MemoryBot {
   private aiClient: AIClient;
   private commandHandler: CommandHandler;
   private state: BotState;
+  private pendingMemories: Map<string, { memory: GeneratedMemory; message: Message }> = new Map();
 
   constructor(
     config: BotConfig,
@@ -23,7 +41,7 @@ export class MemoryBot {
     this.config = config;
     this.memoryManager = memoryManager;
     this.aiClient = aiClient;
-    this.commandHandler = new CommandHandler(memoryManager, aiClient);
+    this.commandHandler = new CommandHandler(memoryManager, aiClient, this.handleAutoSaveWithPreview.bind(this));
     this.state = {
       isRunning: false,
       pendingRequests: 0,
@@ -34,8 +52,9 @@ export class MemoryBot {
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMessageReactions,
       ],
-      partials: [Partials.Message, Partials.Channel],
+      partials: [Partials.Message, Partials.Channel, Partials.Reaction],
     });
 
     this.setupEventHandlers();
@@ -45,9 +64,14 @@ export class MemoryBot {
    * イベントハンドラを設定
    */
   private setupEventHandlers(): void {
-    this.client.on('ready', () => {
+    this.client.on('ready', async () => {
       console.log(`Logged in as ${this.client.user?.tag}`);
       this.state.isRunning = true;
+      try {
+        await registerCommands(this.client);
+      } catch (error) {
+        console.error('Failed to register slash commands:', error);
+      }
     });
 
     this.client.on('messageCreate', async (message) => {
@@ -57,6 +81,128 @@ export class MemoryBot {
     this.client.on('error', (error) => {
       console.error('Discord client error:', error);
       this.state.lastError = error;
+    });
+
+    // (A) サーバー招待時の自動挨拶
+    this.client.on('guildCreate', async (guild) => {
+      try {
+        let channel = guild.systemChannel;
+        if (!channel) {
+          channel = guild.channels.cache.find(
+            (ch) =>
+              ch.type === ChannelType.GuildText &&
+              ch.permissionsFor(guild.members.me!)?.has(PermissionFlagsBits.SendMessages) === true
+          ) as TextChannel | undefined ?? null;
+        }
+        if (!channel) {
+          console.warn(`No writable channel found in guild ${guild.id}`);
+          return;
+        }
+        const embed = new EmbedBuilder()
+          .setTitle('🐬 Dolphive へようこそ！')
+          .setDescription(
+            '🔍 `/search キーワード` で過去のメモを検索\n' +
+            '📝 カテゴリ名チャンネル（#daily, #ideas 等）での発言は自動保存\n' +
+            '💾 `!save` で会話を手動保存'
+          )
+          .setFooter({ text: '詳しくは !help で確認できます' })
+          .setColor(0x00bfff);
+        await channel.send({ embeds: [embed] });
+        console.log(`[KPI] greeting_sent:${guild.id}`);
+      } catch (error) {
+        console.error('guildCreate greeting error:', error);
+      }
+    });
+
+    // (D-3) 絵文字リアクションで保存トリガー
+    this.client.on('messageReactionAdd', async (reaction, user) => {
+      try {
+        if (reaction.emoji.name !== '📝') return;
+        if (reaction.partial) reaction = await reaction.fetch();
+        if (reaction.message.partial) await reaction.message.fetch();
+        if (user.bot) return;
+        console.log('[KPI] save_reaction');
+        await this.handleAutoSaveWithPreview(reaction.message as Message);
+      } catch (error) {
+        console.error('Reaction save error:', error);
+      }
+    });
+
+    // interactionCreate（スラッシュコマンド + ボタン）
+    this.client.on('interactionCreate', async (interaction) => {
+      if (interaction.isChatInputCommand()) {
+        if (interaction.commandName === 'search') {
+          await handleSearchInteraction(interaction, this.memoryManager);
+        }
+        return;
+      }
+
+      if (!interaction.isButton()) return;
+
+      if (interaction.customId.startsWith('search_more:')) {
+        await handleSearchButton(interaction, this.memoryManager);
+        return;
+      }
+
+      const customId = interaction.customId;
+      if (customId.startsWith('save_confirm:')) {
+        const messageId = customId.slice('save_confirm:'.length);
+        const pending = this.pendingMemories.get(messageId);
+        if (!pending) {
+          await interaction.reply({ content: 'この保存リクエストは期限切れです。', ephemeral: true });
+          return;
+        }
+        if (interaction.user.id !== pending.message.author.id) {
+          await interaction.reply({ content: 'この操作は実行できません。', ephemeral: true });
+          return;
+        }
+        this.pendingMemories.delete(messageId);
+        try {
+          console.log('[KPI] save_attempt');
+          const saved = await this.memoryManager.saveMemory({
+            category: pending.memory.category,
+            title: pending.memory.title,
+            tags: pending.memory.tags,
+            summary: pending.memory.summary,
+            content: pending.memory.content,
+            startDate: pending.memory.startDate,
+            endDate: pending.memory.endDate,
+            startTime: pending.memory.startTime,
+            endTime: pending.memory.endTime,
+            location: pending.memory.location,
+            recurring: pending.memory.recurring as CreateMemoryInput['recurring'],
+            status: pending.memory.status as CreateMemoryInput['status'],
+            dueDate: pending.memory.dueDate,
+            priority: pending.memory.priority as CreateMemoryInput['priority'],
+          });
+          console.log('[KPI] save_success');
+          await interaction.update({
+            content:
+              `📁 **${pending.memory.category}** として保存しました\n` +
+              `**${pending.memory.title}** | ${pending.memory.tags.join(', ')}\n\n` +
+              `🔍 検索: \`/search キーワード\`\n` +
+              `📋 最近のメモ: \`!recent\`\n` +
+              `📁 カテゴリ一覧: \`!categories\``,
+            embeds: [],
+            components: [],
+          });
+        } catch (error) {
+          await interaction.update({
+            content: this.formatUserFacingError(error),
+            embeds: [],
+            components: [],
+          });
+        }
+      } else if (customId.startsWith('save_cancel:')) {
+        const messageId = customId.slice('save_cancel:'.length);
+        const pendingCancel = this.pendingMemories.get(messageId);
+        if (pendingCancel && interaction.user.id !== pendingCancel.message.author.id) {
+          await interaction.reply({ content: 'この操作は実行できません。', ephemeral: true });
+          return;
+        }
+        this.pendingMemories.delete(messageId);
+        await interaction.update({ content: '保存をキャンセルしました。', embeds: [], components: [] });
+      }
     });
   }
 
@@ -82,7 +228,15 @@ export class MemoryBot {
       return;
     }
 
-    // 自動保存トリガー検出
+    // チャンネル名カテゴリ判定
+    const category = detectCategoryFromChannel((message.channel as TextChannel).name);
+    if (category) {
+      console.log('[KPI] save_auto');
+      await this.handleAutoSaveWithPreview(message, category);
+      return;
+    }
+
+    // 自動保存トリガー検出（従来フロー）
     await this.checkAutoSave(message);
   }
 
@@ -96,56 +250,7 @@ export class MemoryBot {
       if (!decision.shouldSave) return;
 
       console.log(`Auto-save triggered: ${decision.reason}`);
-
-      const channel = message.channel as TextChannel;
-
-      // 直前のメッセージを取得
-      const messages = await channel.messages.fetch({ limit: 20, before: message.id });
-      const context = this.messagesToContext(messages);
-
-      // 現在のメッセージも追加
-      context.push({
-        authorId: message.author.id,
-        authorName: message.author.username,
-        content: message.content,
-        timestamp: message.createdAt,
-        isBot: false,
-      });
-
-      if (context.length === 0) {
-        await message.reply('保存する内容が見つかりませんでした。');
-        return;
-      }
-
-      this.state.pendingRequests++;
-      await message.reply('会話をメモリに保存中...');
-
-      try {
-        const memory = await this.aiClient.generateMemory({
-          username: message.author.username,
-          messages: context.map((c) => ({
-            role: c.isBot ? 'bot' : 'user',
-            content: c.content,
-            timestamp: c.timestamp,
-          } as ConversationMessage)),
-        });
-
-        const saved = await this.memoryManager.saveMemory({
-          category: memory.category,
-          title: memory.title,
-          tags: memory.tags,
-          summary: memory.summary,
-          content: memory.content,
-        });
-
-        await message.reply(
-          `メモリを保存しました\n` +
-          `**${memory.title}**\n` +
-          `カテゴリ: ${memory.category} | タグ: ${memory.tags.join(', ')}`
-        );
-      } finally {
-        this.state.pendingRequests--;
-      }
+      await this.handleAutoSaveWithPreview(message);
     } catch (error) {
       console.error('Auto-save error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -167,6 +272,93 @@ export class MemoryBot {
         isBot: m.author.bot,
       }))
       .reverse(); // 古い順に
+  }
+
+  private async handleAutoSaveWithPreview(message: Message, category?: MemoryCategory, excludeCurrentMessage?: boolean): Promise<void> {
+    try {
+      const channel = message.channel as TextChannel;
+      const messages = await channel.messages.fetch({ limit: 20, before: message.id });
+      const context = this.messagesToContext(messages);
+
+      if (!excludeCurrentMessage) {
+        context.push({
+          authorId: message.author.id,
+          authorName: message.author.username,
+          content: message.content,
+          timestamp: message.createdAt,
+          isBot: false,
+        });
+      }
+
+      if (context.length === 0) return;
+
+      this.state.pendingRequests++;
+      try {
+        const memory = await this.aiClient.generateMemory({
+          username: message.author.username,
+          messages: context.map((c) => ({
+            role: c.isBot ? 'bot' : 'user',
+            content: c.content,
+            timestamp: c.timestamp,
+          } as ConversationMessage)),
+        });
+
+        if (category) {
+          memory.category = category;
+        }
+
+        this.pendingMemories.set(message.id, { memory, message });
+
+        const embed = new EmbedBuilder()
+          .setTitle(memory.title)
+          .addFields(
+            { name: 'カテゴリ', value: memory.category, inline: true },
+            { name: 'タグ', value: memory.tags.join(', ') || 'なし', inline: true },
+          )
+          .setDescription(memory.summary)
+          .setColor(0x00bfff);
+
+        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId(`save_confirm:${message.id}`).setLabel('💾 保存').setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`save_cancel:${message.id}`).setLabel('❌ キャンセル').setStyle(ButtonStyle.Danger),
+        );
+
+        const reply = await message.reply({ embeds: [embed], components: [row] });
+
+        try {
+          await reply.awaitMessageComponent({
+            componentType: ComponentType.Button,
+            time: 30_000,
+            filter: (i) => i.user.id === message.author.id,
+          });
+        } catch {
+          // タイムアウト
+          this.pendingMemories.delete(message.id);
+          await reply.edit({ content: '保存をキャンセルしました（タイムアウト）。', embeds: [], components: [] });
+        }
+      } finally {
+        this.state.pendingRequests--;
+      }
+    } catch (error) {
+      console.error('Auto-save with preview error:', error);
+      await message.reply(this.formatUserFacingError(error));
+    }
+  }
+
+  private formatUserFacingError(error: unknown): string {
+    if (error instanceof Error && 'status' in error) {
+      const status = (error as { status: number }).status;
+      if (status === 403) return 'Botに必要な権限を付与してください: メッセージ送信、埋め込みリンク';
+      if (status === 401) return 'GITHUB_TOKENの有効期限を確認してください';
+      if (status === 429) {
+        const retryAfter = (error as { retryAfter?: number }).retryAfter
+          ?? (error as { retry_after?: number }).retry_after;
+        if (retryAfter) return `しばらくお待ちください。約${retryAfter}秒後に再試行できます`;
+        return 'しばらくお待ちください。時間を置いて再試行してください';
+      }
+    }
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    return `保存に失敗しました: ${msg}`;
   }
 
   /**

@@ -1,7 +1,9 @@
-import type { Message, TextChannel } from 'discord.js';
-import type { MemoryManager, SearchResult, CreateMemoryInput } from '../github/index.js';
-import type { AIClient, ConversationMessage } from '../ai/index.js';
-import type { MessageContext } from './types.js';
+import type { Message } from 'discord.js';
+import type { MemoryManager, SearchResult } from '../github/index.js';
+import type { AIClient } from '../ai/index.js';
+import type { MemoryCategory } from '../github/types.js';
+
+const VALID_CATEGORIES: MemoryCategory[] = ['daily', 'ideas', 'research', 'images', 'logs', 'schedule', 'tasks'];
 
 /**
  * コマンドハンドラ
@@ -9,10 +11,16 @@ import type { MessageContext } from './types.js';
 export class CommandHandler {
   private memoryManager: MemoryManager;
   private aiClient: AIClient;
+  private onSaveRequest: (message: Message, category?: MemoryCategory, excludeCurrentMessage?: boolean) => Promise<void>;
 
-  constructor(memoryManager: MemoryManager, aiClient: AIClient) {
+  constructor(
+    memoryManager: MemoryManager,
+    aiClient: AIClient,
+    onSaveRequest: (message: Message, category?: MemoryCategory, excludeCurrentMessage?: boolean) => Promise<void>,
+  ) {
     this.memoryManager = memoryManager;
     this.aiClient = aiClient;
+    this.onSaveRequest = onSaveRequest;
   }
 
   /**
@@ -21,7 +29,7 @@ export class CommandHandler {
   async execute(message: Message, command: string, args: string[]): Promise<void> {
     switch (command) {
       case 'save':
-        await this.handleSave(message);
+        await this.handleSave(message, args);
         break;
       case 'search':
         await this.handleSearch(message, args);
@@ -40,60 +48,14 @@ export class CommandHandler {
   /**
    * !save - 直前の会話を保存
    */
-  private async handleSave(message: Message): Promise<void> {
-    const channel = message.channel as TextChannel;
+  private async handleSave(message: Message, args: string[]): Promise<void> {
+    console.log('[KPI] save_manual');
 
-    // 直前のメッセージを取得（最大20件）
-    const messages = await channel.messages.fetch({ limit: 20, before: message.id });
-    const context = this.messagesToContext(messages);
+    const categoryOverride = args[0] && VALID_CATEGORIES.includes(args[0] as MemoryCategory)
+      ? args[0] as MemoryCategory
+      : undefined;
 
-    if (context.length === 0) {
-      await message.reply('保存する会話が見つかりませんでした。');
-      return;
-    }
-
-    await message.reply('会話を解析中...');
-
-    try {
-      const memory = await this.aiClient.generateMemory({
-        username: message.author.username,
-        messages: context.map((c) => ({
-          role: c.isBot ? 'bot' : 'user',
-          content: c.content,
-          timestamp: c.timestamp,
-        } as ConversationMessage)),
-      });
-
-      const saved = await this.memoryManager.saveMemory({
-        category: memory.category,
-        title: memory.title,
-        tags: memory.tags,
-        summary: memory.summary,
-        content: memory.content,
-        // Schedule fields
-        startDate: memory.startDate,
-        endDate: memory.endDate,
-        startTime: memory.startTime,
-        endTime: memory.endTime,
-        location: memory.location,
-        recurring: memory.recurring as CreateMemoryInput['recurring'],
-        // Task fields
-        status: memory.status as CreateMemoryInput['status'],
-        dueDate: memory.dueDate,
-        priority: memory.priority as CreateMemoryInput['priority'],
-      });
-
-      await message.reply(
-        `メモリを保存しました\n` +
-        `- タイトル: ${memory.title}\n` +
-        `- カテゴリ: ${memory.category}\n` +
-        `- タグ: ${memory.tags.join(', ')}\n` +
-        `- パス: ${saved.path}`
-      );
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      await message.reply(`保存に失敗しました: ${errorMessage}`);
-    }
+    await this.onSaveRequest(message, categoryOverride, true);
   }
 
   /**
@@ -160,22 +122,6 @@ export class CommandHandler {
     `.trim();
 
     await message.reply(helpText);
-  }
-
-  /**
-   * Discordメッセージをコンテキストに変換
-   */
-  private messagesToContext(messages: Map<string, Message>): MessageContext[] {
-    return Array.from(messages.values())
-      .filter((m) => m.content && !m.content.startsWith('!'))
-      .map((m) => ({
-        authorId: m.author.id,
-        authorName: m.author.username,
-        content: m.content,
-        timestamp: m.createdAt,
-        isBot: m.author.bot,
-      }))
-      .reverse(); // 古い順に
   }
 
   /**

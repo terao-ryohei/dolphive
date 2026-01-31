@@ -1,4 +1,6 @@
 import type { Message } from 'discord.js';
+import type { GeneratedMemory } from '../ai/types.js';
+import type { MemoryCategory } from '../github/types.js';
 
 /**
  * Discord Bot設定
@@ -60,4 +62,10 @@ export interface BotState {
   lastError?: Error;
   /** 処理中のリクエスト数 */
   pendingRequests: number;
+}
+
+export interface PendingMemory {
+  memory: GeneratedMemory;
+  message: Message;
+  categoryOverride?: MemoryCategory;
 }
