@@ -9,6 +9,7 @@ module.exports = {
       max_memory_restart: '200M',
       env: {
         NODE_ENV: 'production',
+        NODE_OPTIONS: '--max-old-space-size=384',
       },
       error_file: 'logs/error.log',
       out_file: 'logs/out.log',
