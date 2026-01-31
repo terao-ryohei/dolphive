@@ -29,7 +29,7 @@ cp .env.example .env
 必要な値:
 
 - `DISCORD_TOKEN`: Discord Botトークン
-- `DISCORD_CHANNEL_ID`: 監視対象チャンネルID
+- `DISCORD_CHANNEL_ID`: 監視対象チャンネルID（未設定時はBOTが参加している全サーバーの全テキストチャンネルを自動監視。設定時は指定チャンネルのみ監視）
 - `GLM_API_KEY`: GLM-4 APIキー
 - `GITHUB_TOKEN`: GitHub Personal Access Token
 - `GITHUB_OWNER`: GitHubユーザー名
@@ -57,6 +57,24 @@ npm start
 | `!search <キーワード>` | メモリを検索 |
 | `!recent` | 最近のメモリを表示 |
 | `!help` | ヘルプを表示 |
+
+## チャンネル名によるカテゴリ自動判定
+
+チャンネル名にカテゴリキーワードが含まれている場合、そのチャンネルでの発言は対応するカテゴリとして自動保存されます。
+
+| カテゴリ | キーワード（英語） | キーワード（日本語） |
+|---------|-------------------|---------------------|
+| `daily` | daily | 日記 |
+| `ideas` | ideas, idea | アイデア |
+| `research` | research | 調査 |
+| `images` | images, image | 画像 |
+| `logs` | logs, log | 作業ログ |
+| `schedule` | schedule | 予定 |
+| `tasks` | tasks, task | タスク |
+
+- チャンネル名は正規化されます（全角→半角変換、記号・絵文字の除去）
+- 例: `#📝daily-log` → `daily` カテゴリ、`#アイデア` → `ideas` カテゴリ
+- マッチしないチャンネルではAIが自動判定（下記「自動保存トリガー」参照）
 
 ## 自動保存トリガー
 
