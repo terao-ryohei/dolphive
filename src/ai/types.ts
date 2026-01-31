@@ -23,6 +23,17 @@ export interface GeneratedMemory {
   category: MemoryCategory;
   /** 本文（Markdown形式） */
   content: string;
+  // Schedule fields
+  startDate?: string;
+  endDate?: string;
+  startTime?: string;
+  endTime?: string;
+  location?: string;
+  recurring?: string;
+  // Task fields
+  status?: string;
+  dueDate?: string;
+  priority?: string;
 }
 
 /**

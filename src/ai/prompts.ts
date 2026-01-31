@@ -13,7 +13,16 @@ export const MEMORY_GENERATION_PROMPT = `あなたはユーザーの会話から
   "summary": "1-2文の要約",
   "tags": ["タグ1", "タグ2"],
   "category": "カテゴリ名",
-  "content": "本文（Markdown形式）"
+  "content": "本文（Markdown形式）",
+  "start_date": "(scheduleの場合) YYYY-MM-DD",
+  "end_date": "(scheduleの場合) YYYY-MM-DD",
+  "start_time": "(scheduleの場合) HH:MM",
+  "end_time": "(scheduleの場合) HH:MM",
+  "location": "(scheduleの場合) 場所",
+  "recurring": "(scheduleの場合) none/daily/weekly/monthly/yearly",
+  "status": "(tasksの場合) todo/doing/done",
+  "due_date": "(tasksの場合) YYYY-MM-DD",
+  "priority": "(tasksの場合) high/medium/low"
 }
 \`\`\`
 
@@ -23,6 +32,8 @@ export const MEMORY_GENERATION_PROMPT = `あなたはユーザーの会話から
 - research: 調査結果、学んだこと、技術メモ
 - images: 画像に関するメモ（画像URLがある場合）
 - logs: 作業ログ、進捗記録
+- schedule: スケジュール、予定、約束、イベント
+- tasks: タスク、TODO、やること、やるべきこと
 
 ## ルール
 1. titleは20文字以内で簡潔に
@@ -30,6 +41,8 @@ export const MEMORY_GENERATION_PROMPT = `あなたはユーザーの会話から
 3. tagsは最大5個まで、関連キーワードを抽出
 4. contentは会話の重要部分をMarkdown形式で整理
 5. 必ず有効なJSONのみを出力（説明文なし）
+6. scheduleの場合はstart_dateを必ず含める
+7. tasksの場合はstatusを必ず含める（デフォルト: todo）
 
 ## 会話内容
 `;

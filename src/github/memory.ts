@@ -11,7 +11,7 @@ import type {
 } from './types.js';
 
 const MEMORY_BASE_PATH = 'memory';
-const ALL_CATEGORIES: MemoryCategory[] = ['daily', 'ideas', 'research', 'images', 'logs'];
+const ALL_CATEGORIES: MemoryCategory[] = ['daily', 'ideas', 'research', 'images', 'logs', 'schedule', 'tasks'];
 
 /**
  * メモリマネージャ
@@ -72,6 +72,17 @@ export class MemoryManager {
     if (input.driveUrl) {
       frontmatter.drive_url = input.driveUrl;
     }
+    // Schedule fields
+    if (input.startDate) frontmatter.start_date = input.startDate;
+    if (input.endDate) frontmatter.end_date = input.endDate;
+    if (input.startTime) frontmatter.start_time = input.startTime;
+    if (input.endTime) frontmatter.end_time = input.endTime;
+    if (input.location) frontmatter.location = input.location;
+    if (input.recurring) frontmatter.recurring = input.recurring;
+    // Task fields
+    if (input.status) frontmatter.status = input.status;
+    if (input.dueDate) frontmatter.due_date = input.dueDate;
+    if (input.priority) frontmatter.priority = input.priority;
 
     return frontmatter;
   }
@@ -92,6 +103,17 @@ export class MemoryManager {
     if (frontmatter.drive_url) {
       yamlLines.push(`drive_url: ${frontmatter.drive_url}`);
     }
+    // Schedule fields
+    if (frontmatter.start_date) yamlLines.push(`start_date: ${frontmatter.start_date}`);
+    if (frontmatter.end_date) yamlLines.push(`end_date: ${frontmatter.end_date}`);
+    if (frontmatter.start_time) yamlLines.push(`start_time: ${frontmatter.start_time}`);
+    if (frontmatter.end_time) yamlLines.push(`end_time: ${frontmatter.end_time}`);
+    if (frontmatter.location) yamlLines.push(`location: ${this.escapeYamlValue(frontmatter.location)}`);
+    if (frontmatter.recurring) yamlLines.push(`recurring: ${frontmatter.recurring}`);
+    // Task fields
+    if (frontmatter.status) yamlLines.push(`status: ${frontmatter.status}`);
+    if (frontmatter.due_date) yamlLines.push(`due_date: ${frontmatter.due_date}`);
+    if (frontmatter.priority) yamlLines.push(`priority: ${frontmatter.priority}`);
 
     yamlLines.push(`summary: ${this.escapeYamlValue(frontmatter.summary)}`);
     yamlLines.push('---');

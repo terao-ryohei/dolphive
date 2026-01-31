@@ -67,8 +67,11 @@ export class MemoryBot {
     // 自分自身のメッセージは無視
     if (message.author.bot) return;
 
-    // 指定チャンネル以外は無視
-    if (message.channel.id !== this.config.channelId) return;
+    // Guild外メッセージ（DM等）は無視
+    if (!message.guild) return;
+
+    // 指定チャンネルがある場合、それ以外は無視
+    if (this.config.channelId && message.channel.id !== this.config.channelId) return;
 
     const content = message.content.trim();
 

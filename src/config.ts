@@ -6,7 +6,7 @@ import 'dotenv/config';
 export interface AppConfig {
   discord: {
     token: string;
-    channelId: string;
+    channelId: string | undefined;
   };
   ai: {
     apiKey: string;
@@ -45,7 +45,7 @@ export function loadConfig(): AppConfig {
   return {
     discord: {
       token: getRequiredEnv('DISCORD_TOKEN'),
-      channelId: getRequiredEnv('DISCORD_CHANNEL_ID'),
+      channelId: process.env['DISCORD_CHANNEL_ID']?.trim() || undefined,
     },
     ai: {
       apiKey: getRequiredEnv('GLM_API_KEY'),

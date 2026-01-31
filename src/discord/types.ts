@@ -7,7 +7,7 @@ export interface BotConfig {
   /** Botトークン */
   token: string;
   /** 監視対象チャンネルID */
-  channelId: string;
+  channelId: string | undefined;
 }
 
 /**

@@ -5,8 +5,10 @@
  * - research: 調査結果
  * - images: 画像メモ
  * - logs: ログ
+ * - schedule: スケジュール・予定
+ * - tasks: タスク・TODO
  */
-export type MemoryCategory = 'daily' | 'ideas' | 'research' | 'images' | 'logs';
+export type MemoryCategory = 'daily' | 'ideas' | 'research' | 'images' | 'logs' | 'schedule' | 'tasks';
 
 /**
  * Markdown YAML frontmatter
@@ -19,6 +21,17 @@ export interface MemoryFrontmatter {
   type: MemoryCategory;
   summary: string;
   drive_url?: string;
+  // Schedule fields
+  start_date?: string;
+  end_date?: string;
+  start_time?: string;
+  end_time?: string;
+  location?: string;
+  recurring?: 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly';
+  // Task fields
+  status?: 'todo' | 'doing' | 'done';
+  due_date?: string;
+  priority?: 'high' | 'medium' | 'low';
 }
 
 /**
@@ -37,6 +50,17 @@ export interface CreateMemoryInput {
   content: string;
   /** Google DriveのURL（画像の場合） */
   driveUrl?: string;
+  // Schedule fields
+  startDate?: string;
+  endDate?: string;
+  startTime?: string;
+  endTime?: string;
+  location?: string;
+  recurring?: 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly';
+  // Task fields
+  status?: 'todo' | 'doing' | 'done';
+  dueDate?: string;
+  priority?: 'high' | 'medium' | 'low';
 }
 
 /**

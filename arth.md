@@ -61,7 +61,7 @@ Botがやらない
 
 タグ配列（tags）
 
-カテゴリ（daily / idea / research / image / log）
+カテゴリ（daily / ideas / research / images / logs / schedule / tasks）
 
 Markdown本文（YAML frontmatter 付き）
 
@@ -81,6 +81,8 @@ memory/
 ├─ research/
 ├─ images/
 ├─ logs/
+├─ schedule/
+└─ tasks/
 
 ファイル命名
 
@@ -94,10 +96,23 @@ title: 自動生成
 date: YYYY-MM-DD
 tags: [tag1, tag2]
 source: discord
-type: idea | research | image
+type: daily | ideas | research | images | logs | schedule | tasks
 drive_url: (画像のみ)
 summary: 要約
 ---
+
+# スケジュール用追加フィールド（type: schedule の場合）
+start_date: YYYY-MM-DD
+end_date: YYYY-MM-DD
+start_time: HH:MM
+end_time: HH:MM
+location: 場所
+recurring: none | daily | weekly | monthly | yearly
+
+# タスク用追加フィールド（type: tasks の場合）
+status: todo | doing | done
+due_date: YYYY-MM-DD
+priority: high | medium | low
 
 本文
 

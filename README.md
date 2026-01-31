@@ -76,6 +76,8 @@ npm start
 | `research` | 調査結果、技術メモ |
 | `images` | 画像に関するメモ |
 | `logs` | 作業ログ、進捗 |
+| `schedule` | スケジュール、予定、約束 |
+| `tasks` | タスク、TODO、やること |
 
 ## ファイル構造
 
@@ -115,6 +117,25 @@ summary: 要約
 ```
 
 保存先: `memory/{category}/{YYYY-MM-DD}-{uuid}.md`
+
+### スケジュール追加フィールド（type: schedule）
+
+```yaml
+start_date: "2026-02-01"   # 必須: 開始日
+end_date: "2026-02-01"     # 任意: 終了日
+start_time: "10:00"        # 任意: 開始時刻
+end_time: "11:00"          # 任意: 終了時刻
+location: "会議室A"         # 任意: 場所
+recurring: "none"          # 任意: none/daily/weekly/monthly/yearly
+```
+
+### タスク追加フィールド（type: tasks）
+
+```yaml
+status: "todo"             # 必須: todo/doing/done
+due_date: "2026-02-01"     # 任意: 期限
+priority: "medium"         # 任意: high/medium/low
+```
 
 ## 開発
 

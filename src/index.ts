@@ -51,7 +51,11 @@ async function main(): Promise<void> {
   await bot.start();
 
   console.log('Memory Bot is running!');
-  console.log(`Watching channel: ${config.discord.channelId}`);
+  if (config.discord.channelId) {
+    console.log(`Watching channel: ${config.discord.channelId}`);
+  } else {
+    console.log('Watching all guild text channels');
+  }
   console.log('Press Ctrl+C to stop.');
 }
 

@@ -1,5 +1,5 @@
 import type { Message, TextChannel } from 'discord.js';
-import type { MemoryManager, SearchResult } from '../github/index.js';
+import type { MemoryManager, SearchResult, CreateMemoryInput } from '../github/index.js';
 import type { AIClient, ConversationMessage } from '../ai/index.js';
 import type { MessageContext } from './types.js';
 
@@ -70,6 +70,17 @@ export class CommandHandler {
         tags: memory.tags,
         summary: memory.summary,
         content: memory.content,
+        // Schedule fields
+        startDate: memory.startDate,
+        endDate: memory.endDate,
+        startTime: memory.startTime,
+        endTime: memory.endTime,
+        location: memory.location,
+        recurring: memory.recurring as CreateMemoryInput['recurring'],
+        // Task fields
+        status: memory.status as CreateMemoryInput['status'],
+        dueDate: memory.dueDate,
+        priority: memory.priority as CreateMemoryInput['priority'],
       });
 
       await message.reply(

@@ -108,7 +108,7 @@ export class AIClient {
       }
 
       // カテゴリのバリデーション
-      const validCategories = ['daily', 'ideas', 'research', 'images', 'logs'];
+      const validCategories = ['daily', 'ideas', 'research', 'images', 'logs', 'schedule', 'tasks'];
       if (!validCategories.includes(parsed.category)) {
         parsed.category = 'ideas'; // デフォルト
       }
@@ -119,6 +119,17 @@ export class AIClient {
         tags: Array.isArray(parsed.tags) ? parsed.tags.slice(0, 5).map(String) : [],
         category: parsed.category,
         content: String(parsed.content),
+        // Schedule fields
+        startDate: parsed.start_date ? String(parsed.start_date) : undefined,
+        endDate: parsed.end_date ? String(parsed.end_date) : undefined,
+        startTime: parsed.start_time ? String(parsed.start_time) : undefined,
+        endTime: parsed.end_time ? String(parsed.end_time) : undefined,
+        location: parsed.location ? String(parsed.location) : undefined,
+        recurring: parsed.recurring ? String(parsed.recurring) : undefined,
+        // Task fields
+        status: parsed.status ? String(parsed.status) : undefined,
+        dueDate: parsed.due_date ? String(parsed.due_date) : undefined,
+        priority: parsed.priority ? String(parsed.priority) : undefined,
       };
     } catch (error) {
       throw new Error(`Failed to parse AI response: ${error instanceof Error ? error.message : 'Unknown error'}`);
