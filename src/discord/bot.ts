@@ -19,7 +19,7 @@ import type { AIClient, ConversationMessage } from '../ai/index.js';
 import type { ImageAttachment } from '../ai/client.js';
 import type { GeneratedMemory } from '../ai/types.js';
 import { CommandHandler } from './commands.js';
-import { detectCategoryFromChannel } from './channel-category.js';
+import { detectCategoryFromChannel, isChatChannel } from './channel-category.js';
 import { getScopeId } from './scope.js';
 import { registerCommands, handleSearchInteraction, handleSearchButton, handleDeleteInteraction, handleEditInteraction, handleRemindInteraction } from './slash-commands.js';
 import { initReminder, loadAllReminders, startReminderChecker } from '../reminder.js';
@@ -262,9 +262,9 @@ export class MemoryBot {
       }
     }
 
-    // 会話応答チャンネル判定（排他条件: コマンド/カテゴリは上で処理済み）
-    if (this.config.chatChannelIds.length > 0 && this.config.chatChannelIds.includes(message.channel.id)) {
-      // 保存トリガーチェック（メモ優先: 保存トリガー検出時は応答しない）
+    // 会話応答チャンネル判定（排他条件: コマンド/カテゴリは上で処理済み、GuildTextのみ）
+    if (message.guild && message.channel.type === ChannelType.GuildText &&
+        isChatChannel((message.channel as TextChannel).name, this.config.chatChannelIds, message.channel.id)) {
       const decision = await this.aiClient.shouldSaveMemory(message.content);
       if (decision.shouldSave) {
         console.log(`[KPI] chat_channel_save_trigger: ${decision.reason}`);

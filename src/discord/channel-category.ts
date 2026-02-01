@@ -10,13 +10,22 @@ const CATEGORY_KEYWORDS: Record<MemoryCategory, string[]> = {
   tasks: ['tasks', 'task', 'タスク'],
 };
 
-function normalizeChannelName(name: string): string {
+export function normalizeChannelName(name: string): string {
   return name
     .toLowerCase()
     .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (ch) =>
       String.fromCharCode(ch.charCodeAt(0) - 0xfee0),
     )
     .replace(/[^\p{L}\p{N}\-_]/gu, '');
+}
+
+const CHAT_KEYWORDS = ['雑談', '一般', 'general', 'chat', 'random', 'おしゃべり', 'フリートーク'];
+const NORMALIZED_CHAT_KEYWORDS = CHAT_KEYWORDS.map((kw) => normalizeChannelName(kw));
+
+export function isChatChannel(channelName: string, chatChannelIds: readonly string[], channelId: string): boolean {
+  if (chatChannelIds.includes(channelId)) return true;
+  const normalized = normalizeChannelName(channelName);
+  return NORMALIZED_CHAT_KEYWORDS.some((kw) => normalized.includes(kw));
 }
 
 export function detectCategoryFromChannel(channelName: string): MemoryCategory | null {
