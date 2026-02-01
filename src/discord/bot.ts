@@ -20,7 +20,7 @@ import type { ImageAttachment } from '../ai/client.js';
 import type { GeneratedMemory } from '../ai/types.js';
 import { detectCategoryFromChannel, isChatChannel } from './channel-category.js';
 import { getScopeId } from './scope.js';
-import { registerCommands, handleSearchInteraction, handleSearchButton, handleDeleteInteraction, handleEditInteraction, handleRemindInteraction, handleSaveInteraction, handleRecentInteraction, handleCategoriesInteraction, handleHelpInteraction } from './slash-commands.js';
+import { registerCommands, handleSearchInteraction, handleSearchButton, handleDeleteInteraction, handleEditInteraction, handleRemindInteraction, handleSaveInteraction, handleRecentInteraction, handleCategoriesInteraction, handleHelpInteraction, handleInitInteraction } from './slash-commands.js';
 import { initReminder, loadAllReminders, startReminderChecker } from '../reminder.js';
 import type { GitHubClientConfig } from '../github/types.js';
 import type { BotConfig, BotState, MessageContext } from './types.js';
@@ -164,6 +164,8 @@ export class MemoryBot {
           await handleCategoriesInteraction(interaction, this.memoryManager);
         } else if (interaction.commandName === 'help') {
           await handleHelpInteraction(interaction);
+        } else if (interaction.commandName === 'init') {
+          await handleInitInteraction(interaction);
         }
         return;
       }

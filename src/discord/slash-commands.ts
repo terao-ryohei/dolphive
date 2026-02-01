@@ -10,6 +10,7 @@ import {
   ComponentType,
   MessageFlags,
   PermissionFlagsBits,
+  ChannelType,
   Client,
   TextChannel,
 } from 'discord.js';
@@ -107,12 +108,18 @@ export const helpCommandData = new ChatInputCommandBuilder()
   .setName('help')
   .setDescription('コマンド一覧・使い方を表示');
 
+export const initCommandData = new ChatInputCommandBuilder()
+  .setName('init')
+  .setDescription('Dolphive用チャンネル一式を自動作成')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels);
+
 export async function registerCommands(client: Client): Promise<void> {
   client.guilds.cache.forEach(async (guild) => {
     try {
       await guild.commands.set([
         commandData, deleteCommandData, editCommandData, remindCommandData,
         saveCommandData, recentCommandData, categoriesCommandData, helpCommandData,
+        initCommandData,
       ]);
       console.log(`Registered slash commands for guild: ${guild.name}`);
     } catch (error) {
@@ -571,6 +578,7 @@ export async function handleHelpInteraction(
     '`/delete <keyword>` — メモリを削除（1件一致時）\n' +
     '`/edit <keyword> <field> <value>` — メモリを編集\n' +
     '`/remind <message> <minutes>` — リマインダーを設定\n' +
+    '`/init` — Dolphive用チャンネル一式を自動作成（管理者向け）\n' +
     '`/help` — このヘルプを表示\n\n' +
     '**自動保存トリガー**\n' +
     '「覚えておいて」「メモして」等のキーワードで自動保存\n' +
@@ -609,4 +617,91 @@ export async function handleRemindInteraction(
     .setColor(0x00bfff);
 
   await interaction.editReply({ embeds: [embed] });
+}
+
+const INIT_CHANNELS = [
+  { name: '雑談', topic: 'Dolphiveが会話に参加する対話チャンネル' },
+  { name: 'daily', topic: '日記の自動保存チャンネル' },
+  { name: 'ideas', topic: 'アイデアの自動保存チャンネル' },
+  { name: 'tasks', topic: 'タスクの自動保存チャンネル' },
+  { name: 'schedule', topic: '予定の自動保存チャンネル' },
+  { name: 'research', topic: '調査メモの自動保存チャンネル' },
+  { name: 'logs', topic: '作業ログの自動保存チャンネル' },
+] as const;
+
+export async function handleInitInteraction(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const guild = interaction.guild;
+  if (!guild) {
+    await interaction.editReply('このコマンドはサーバー内でのみ使用できます。');
+    return;
+  }
+
+  const botMember = guild.members.me;
+  if (!botMember || !botMember.permissions.has(PermissionFlagsBits.ManageChannels)) {
+    await interaction.editReply('Botに「チャンネルの管理（ManageChannels）」権限を付与してください。');
+    return;
+  }
+
+  const CATEGORY_NAME = 'Dolphive';
+  let category = guild.channels.cache.find(
+    (ch) => ch.type === ChannelType.GuildCategory && ch.name === CATEGORY_NAME,
+  );
+
+  if (!category) {
+    category = await guild.channels.create({
+      name: CATEGORY_NAME,
+      type: ChannelType.GuildCategory,
+    });
+  }
+
+  const results: { name: string; status: '✅ 作成' | '⏭️ 既存' | '❌ 失敗'; detail?: string }[] = [];
+
+  for (const ch of INIT_CHANNELS) {
+    const existing = guild.channels.cache.find(
+      (c) => c.type === ChannelType.GuildText && c.parentId === category!.id && c.name === ch.name,
+    );
+
+    if (existing) {
+      results.push({ name: ch.name, status: '⏭️ 既存' });
+      continue;
+    }
+
+    try {
+      await guild.channels.create({
+        name: ch.name,
+        type: ChannelType.GuildText,
+        parent: category.id,
+        topic: ch.topic,
+      });
+      results.push({ name: ch.name, status: '✅ 作成' });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      results.push({ name: ch.name, status: '❌ 失敗', detail: msg });
+    }
+  }
+
+  const resultLines = results.map((r) =>
+    r.detail
+      ? `${r.status} #${r.name} — ${r.detail}`
+      : `${r.status} #${r.name}`
+  ).join('\n');
+
+  const initEmbed = new EmbedBuilder()
+    .setTitle('🐬 Dolphive セットアップ完了')
+    .setColor(0x00bfff)
+    .setDescription(
+      `**${CATEGORY_NAME}** カテゴリにチャンネルを作成しました。\n\n` +
+      resultLines + '\n\n' +
+      '**使い方**\n' +
+      '- #雑談 → Dolphiveが会話に参加します\n' +
+      '- #daily, #ideas 等 → 発言が自動的にメモとして保存されます\n' +
+      '- `/help` で全コマンドを確認できます'
+    )
+    .setTimestamp();
+
+  await interaction.editReply({ embeds: [initEmbed] });
 }
