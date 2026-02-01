@@ -45,7 +45,8 @@ Discord上の会話を自動で分析して保存してくれる、あなた専�
 - `!recent` — 最近のメモを表示
 - `!categories` — カテゴリ別の件数を表示
 - `/delete キーワード` — メモを削除
-- `/edit キーワード field=値` — メモを編集
+- `/edit` — メモを編集（keyword, field, value をそれぞれ入力）
+- `!edit キーワード | field=値` — メモを編集（テキストコマンド版）
 
 ### リマインダー
 
@@ -57,7 +58,7 @@ Discord上の会話を自動で分析して保存してくれる、あなた専�
 
 [Discord Developer Portal](https://discord.com/developers/applications) でBotを作成し、サーバーに招待します。
 
-> **重要**: Developer Portal の Bot 設定で **Message Content Intent** を必ず有効にしてください。これが無効だと Dolphive はメッセージを読み取れず、すべての機能が動作しません。
+> **重要**: Developer Portal の Bot 設定で **Message Content Intent** を必ず有効にしてください。これが無効だとメッセージ本文を読み取れず、自動保存・対話応答・`!` コマンドが動作しません（スラッシュコマンドは影響を受けません）。
 
 ### 2. 環境変数を設定する
 
