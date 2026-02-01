@@ -13,8 +13,11 @@ import {
   Client,
   TextChannel,
 } from 'discord.js';
-import type { MemoryManager } from '../github/index.js';
+import type { MemoryManager, CreateMemoryInput } from '../github/index.js';
 import type { MemoryCategory, SearchResult } from '../github/types.js';
+import type { AIClient, ConversationMessage } from '../ai/index.js';
+import type { ImageAttachment } from '../ai/client.js';
+import type { GeneratedMemory } from '../ai/types.js';
 import { detectCategoryFromChannel } from './channel-category.js';
 import { setReminder } from '../reminder.js';
 import { getScopeId } from './scope.js';
@@ -81,10 +84,36 @@ export const remindCommandData = new ChatInputCommandBuilder()
     opt.setName('minutes').setDescription('何分後にリマインドするか（1～10080）').setRequired(true).setMinValue(1).setMaxValue(10080)
   );
 
+export const saveCommandData = new ChatInputCommandBuilder()
+  .setName('save')
+  .setDescription('直前の会話をメモリとして保存')
+  .addStringOptions((opt) =>
+    opt
+      .setName('category')
+      .setDescription('カテゴリを指定（省略時は自動判定）')
+      .setRequired(false)
+      .addChoices(...ALL_CATEGORIES.map((c) => ({ name: c, value: c })))
+  );
+
+export const recentCommandData = new ChatInputCommandBuilder()
+  .setName('recent')
+  .setDescription('最近のメモリを表示');
+
+export const categoriesCommandData = new ChatInputCommandBuilder()
+  .setName('categories')
+  .setDescription('カテゴリ別メモリ件数を表示');
+
+export const helpCommandData = new ChatInputCommandBuilder()
+  .setName('help')
+  .setDescription('コマンド一覧・使い方を表示');
+
 export async function registerCommands(client: Client): Promise<void> {
   client.guilds.cache.forEach(async (guild) => {
     try {
-      await guild.commands.set([commandData, deleteCommandData, editCommandData, remindCommandData]);
+      await guild.commands.set([
+        commandData, deleteCommandData, editCommandData, remindCommandData,
+        saveCommandData, recentCommandData, categoriesCommandData, helpCommandData,
+      ]);
       console.log(`Registered slash commands for guild: ${guild.name}`);
     } catch (error) {
       console.error(
@@ -331,6 +360,182 @@ export async function handleEditInteraction(
     .setFooter({ text: `${field} を更新しました` });
 
   await interaction.editReply({ embeds: [embed] });
+}
+
+export async function handleSaveInteraction(
+  interaction: ChatInputCommandInteraction,
+  memoryManager: MemoryManager,
+  aiClient: AIClient,
+): Promise<void> {
+  await interaction.deferReply();
+
+  const categoryOverride = interaction.options.getString('category') as MemoryCategory | null;
+  const channel = interaction.channel;
+
+  if (!channel || !('messages' in channel)) {
+    await interaction.editReply('このチャンネルでは保存機能を使用できません。');
+    return;
+  }
+
+  console.log('[KPI] save_slash');
+
+  const messages = await (channel as TextChannel).messages.fetch({ limit: 20 });
+  const context = Array.from(messages.values())
+    .filter((m) => m.content && !m.author.bot)
+    .reverse()
+    .map((m) => ({
+      authorId: m.author.id,
+      authorName: m.author.username,
+      content: m.content,
+      timestamp: m.createdAt,
+      isBot: false,
+    }));
+
+  if (context.length === 0) {
+    await interaction.editReply('保存できるメッセージが見つかりませんでした。');
+    return;
+  }
+
+  const latestUserMessage = messages.find((m) => !m.author.bot);
+  const imageAttachments: ImageAttachment[] = latestUserMessage
+    ? Array.from(latestUserMessage.attachments.values())
+        .filter(a => a.contentType?.startsWith('image/'))
+        .map(a => ({
+          url: a.url,
+          filename: a.name ?? 'unknown',
+          size: a.size,
+          contentType: a.contentType ?? 'image/unknown',
+        }))
+    : [];
+
+  const memory = await aiClient.generateMemory({
+    username: interaction.user.username,
+    messages: context.map((c) => ({
+      role: 'user' as const,
+      content: c.content,
+      timestamp: c.timestamp,
+    } as ConversationMessage)),
+  }, imageAttachments.length > 0 ? imageAttachments : undefined);
+
+  if (categoryOverride) {
+    memory.category = categoryOverride;
+  }
+
+  const guildId = getScopeId(interaction.guildId, interaction.user.id);
+  await memoryManager.saveMemory({
+    category: memory.category,
+    title: memory.title,
+    tags: memory.tags,
+    summary: memory.summary,
+    content: memory.content,
+    startDate: memory.startDate,
+    endDate: memory.endDate,
+    startTime: memory.startTime,
+    endTime: memory.endTime,
+    location: memory.location,
+    recurring: memory.recurring as CreateMemoryInput['recurring'],
+    status: memory.status as CreateMemoryInput['status'],
+    dueDate: memory.dueDate,
+    priority: memory.priority as CreateMemoryInput['priority'],
+  }, guildId, interaction.user.id);
+
+  console.log('[KPI] save_success');
+
+  await interaction.editReply(
+    `📁 **${memory.category}** として保存しました\n` +
+    `**${memory.title}** | ${memory.tags.join(', ')}\n\n` +
+    `🔍 検索: \`/search キーワード\`\n` +
+    `📋 最近のメモ: \`/recent\`\n` +
+    `📁 カテゴリ一覧: \`/categories\``
+  );
+}
+
+export async function handleRecentInteraction(
+  interaction: ChatInputCommandInteraction,
+  memoryManager: MemoryManager,
+): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const guildId = getScopeId(interaction.guildId, interaction.user.id);
+  const results = await memoryManager.getRecentMemories(guildId, 5);
+
+  if (results.length === 0) {
+    await interaction.editReply('メモリがまだありません。');
+    return;
+  }
+
+  const embeds = results.map((r) => formatSearchResultEmbed(r));
+  await interaction.editReply({ embeds });
+}
+
+export async function handleCategoriesInteraction(
+  interaction: ChatInputCommandInteraction,
+  memoryManager: MemoryManager,
+): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const categoryEmoji: Record<MemoryCategory, string> = {
+    daily: '📅',
+    ideas: '💡',
+    research: '🔬',
+    images: '🖼️',
+    logs: '📋',
+    schedule: '🗓️',
+    tasks: '✅',
+  };
+
+  const guildId = getScopeId(interaction.guildId, interaction.user.id);
+
+  const memoriesByCategory = await Promise.all(
+    ALL_CATEGORIES.map(async (category) => ({
+      category,
+      count: (await memoryManager.listMemories(category, guildId)).length,
+    })),
+  );
+
+  const total = memoriesByCategory.reduce((sum, c) => sum + c.count, 0);
+
+  if (total === 0) {
+    await interaction.editReply('保存されたメモリがまだありません。`/save` でメモリを保存してみましょう。');
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle('📂 メモリカテゴリ一覧')
+    .setColor(0x5865F2)
+    .setDescription(`全 ${total} 件のメモリ`)
+    .addFields(
+      memoriesByCategory
+        .filter(c => c.count > 0)
+        .map(c => ({
+          name: `${categoryEmoji[c.category]} ${c.category}`,
+          value: `${c.count} 件`,
+          inline: true,
+        }))
+    )
+    .setTimestamp();
+
+  await interaction.editReply({ embeds: [embed] });
+}
+
+export async function handleHelpInteraction(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
+  const helpText =
+    '**Dolphive コマンド一覧**\n\n' +
+    '`/save [category]` — 直前の会話をメモリとして保存\n' +
+    '`/search <query> [category]` — メモリを検索\n' +
+    '`/recent` — 最近のメモリを表示\n' +
+    '`/categories` — カテゴリ別メモリ件数を表示\n' +
+    '`/delete <keyword>` — メモリを削除（1件一致時）\n' +
+    '`/edit <keyword> <field> <value>` — メモリを編集\n' +
+    '`/remind <message> <minutes>` — リマインダーを設定\n' +
+    '`/help` — このヘルプを表示\n\n' +
+    '**自動保存トリガー**\n' +
+    '「覚えておいて」「メモして」等のキーワードで自動保存\n' +
+    '📝 リアクションでも保存できます';
+
+  await interaction.reply({ content: helpText, flags: MessageFlags.Ephemeral });
 }
 
 export async function handleRemindInteraction(

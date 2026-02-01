@@ -42,15 +42,14 @@ Discord上の会話を自動で分析して保存してくれる、あなた専�
 保存したメモはいつでも検索・編集・削除できます。
 
 - `/search キーワード` — メモをキーワードで検索
-- `!recent` — 最近のメモを表示
-- `!categories` — カテゴリ別の件数を表示
+- `/recent` — 最近のメモを表示
+- `/categories` — カテゴリ別の件数を表示
 - `/delete キーワード` — メモを削除
 - `/edit` — メモを編集（keyword, field, value をそれぞれ入力）
-- `!edit キーワード | field=値` — メモを編集（テキストコマンド版）
 
 ### リマインダー
 
-`/remind` や `!remind 30m 会議の準備` でリマインダーを設定できます。指定した時間になると Dolphive が通知してくれます。
+`/remind` でリマインダーを設定できます。指定した時間になると Dolphive が通知してくれます。
 
 ## はじめかた
 
@@ -58,7 +57,7 @@ Discord上の会話を自動で分析して保存してくれる、あなた専�
 
 [Discord Developer Portal](https://discord.com/developers/applications) でBotを作成し、サーバーに招待します。
 
-> **重要**: Developer Portal の Bot 設定で **Message Content Intent** を必ず有効にしてください。これが無効だとメッセージ本文を読み取れず、自動保存・対話応答・`!` コマンドが動作しません（スラッシュコマンドは影響を受けません）。
+> **重要**: Developer Portal の Bot 設定で **Message Content Intent** を必ず有効にしてください。これが無効だとメッセージ本文を読み取れず、自動保存・対話応答が動作しません。
 
 ### 2. 環境変数を設定する
 

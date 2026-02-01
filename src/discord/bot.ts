@@ -18,10 +18,9 @@ import type { MemoryCategory } from '../github/types.js';
 import type { AIClient, ConversationMessage } from '../ai/index.js';
 import type { ImageAttachment } from '../ai/client.js';
 import type { GeneratedMemory } from '../ai/types.js';
-import { CommandHandler } from './commands.js';
 import { detectCategoryFromChannel, isChatChannel } from './channel-category.js';
 import { getScopeId } from './scope.js';
-import { registerCommands, handleSearchInteraction, handleSearchButton, handleDeleteInteraction, handleEditInteraction, handleRemindInteraction } from './slash-commands.js';
+import { registerCommands, handleSearchInteraction, handleSearchButton, handleDeleteInteraction, handleEditInteraction, handleRemindInteraction, handleSaveInteraction, handleRecentInteraction, handleCategoriesInteraction, handleHelpInteraction } from './slash-commands.js';
 import { initReminder, loadAllReminders, startReminderChecker } from '../reminder.js';
 import type { GitHubClientConfig } from '../github/types.js';
 import type { BotConfig, BotState, MessageContext } from './types.js';
@@ -35,7 +34,6 @@ export class MemoryBot {
   private githubConfig: GitHubClientConfig;
   private memoryManager: MemoryManager;
   private aiClient: AIClient;
-  private commandHandler: CommandHandler;
   private state: BotState;
   private pendingMemories: Map<string, { memory: GeneratedMemory; message: Message }> = new Map();
   private chatCooldowns: Map<string, number> = new Map();
@@ -51,7 +49,6 @@ export class MemoryBot {
     this.githubConfig = githubConfig;
     this.memoryManager = memoryManager;
     this.aiClient = aiClient;
-    this.commandHandler = new CommandHandler(memoryManager, aiClient, this.handleAutoSaveWithPreview.bind(this));
     this.state = {
       isRunning: false,
       pendingRequests: 0,
@@ -123,9 +120,9 @@ export class MemoryBot {
           .setDescription(
             '🔍 `/search キーワード` で過去のメモを検索\n' +
             '📝 カテゴリ名チャンネル（#daily, #ideas 等）での発言は自動保存\n' +
-            '💾 `!save` で会話を手動保存'
+            '💾 `/save` で会話を手動保存'
           )
-          .setFooter({ text: '詳しくは !help で確認できます' })
+          .setFooter({ text: '詳しくは /help で確認できます' })
           .setColor(0x00bfff);
         await channel.send({ embeds: [embed] });
         console.log(`[KPI] greeting_sent:${guild.id}`);
@@ -159,6 +156,14 @@ export class MemoryBot {
           await handleEditInteraction(interaction, this.memoryManager);
         } else if (interaction.commandName === 'remind') {
           await handleRemindInteraction(interaction);
+        } else if (interaction.commandName === 'save') {
+          await handleSaveInteraction(interaction, this.memoryManager, this.aiClient);
+        } else if (interaction.commandName === 'recent') {
+          await handleRecentInteraction(interaction, this.memoryManager);
+        } else if (interaction.commandName === 'categories') {
+          await handleCategoriesInteraction(interaction, this.memoryManager);
+        } else if (interaction.commandName === 'help') {
+          await handleHelpInteraction(interaction);
         }
         return;
       }
@@ -208,8 +213,8 @@ export class MemoryBot {
               `📁 **${pending.memory.category}** として保存しました\n` +
               `**${pending.memory.title}** | ${pending.memory.tags.join(', ')}\n\n` +
               `🔍 検索: \`/search キーワード\`\n` +
-              `📋 最近のメモ: \`!recent\`\n` +
-              `📁 カテゴリ一覧: \`!categories\``,
+              `📋 最近のメモ: \`/recent\`\n` +
+              `📁 カテゴリ一覧: \`/categories\``,
             embeds: [],
             components: [],
           });
@@ -242,15 +247,6 @@ export class MemoryBot {
 
     // 指定チャンネルがある場合、それ以外は無視（DMは通す）
     if (this.config.channelId && message.guild && message.channel.id !== this.config.channelId) return;
-
-    const content = message.content.trim();
-
-    // コマンド処理
-    if (content.startsWith('!')) {
-      const [command, ...args] = content.slice(1).split(/\s+/);
-      await this.commandHandler.execute(message, command.toLowerCase(), args);
-      return;
-    }
 
     // チャンネル名カテゴリ判定（サーバーのみ、DMではスキップ）
     if (message.guild) {
@@ -302,7 +298,7 @@ export class MemoryBot {
    */
   private messagesToContext(messages: Map<string, Message>): MessageContext[] {
     return Array.from(messages.values())
-      .filter((m) => m.content && !m.content.startsWith('!'))
+      .filter((m) => m.content)
       .map((m) => ({
         authorId: m.author.id,
         authorName: m.author.username,
