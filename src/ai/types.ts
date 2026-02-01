@@ -67,3 +67,10 @@ export interface SaveDecision {
   /** 理由 */
   reason: string;
 }
+
+/**
+ * 会話応答結果
+ */
+export interface ChatResponseResult {
+  content: string;
+}

@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import type { AIClientConfig, GeneratedMemory, ConversationContext, SaveDecision } from './types.js';
-import { MEMORY_GENERATION_PROMPT, SAVE_DECISION_PROMPT, formatConversationContext } from './prompts.js';
+import { MEMORY_GENERATION_PROMPT, SAVE_DECISION_PROMPT, CHAT_RESPONSE_PROMPT, formatConversationContext, formatMemoryContext } from './prompts.js';
 import { withRetry } from '../utils/retry.js';
 
 export interface ImageAttachment {
@@ -110,6 +110,42 @@ export class AIClient {
     }
 
     return this.parseSaveDecision(content);
+  }
+
+  /**
+   * 会話応答を生成
+   */
+  async generateChatResponse(
+    userMessage: string,
+    conversationHistory: ReadonlyArray<{ role: 'user' | 'assistant'; content: string }>,
+    relatedMemories: ReadonlyArray<{ title: string; summary: string; category: string }>,
+  ): Promise<{ content: string }> {
+    const memoryContext = formatMemoryContext(relatedMemories);
+    const systemPrompt = `${CHAT_RESPONSE_PROMPT}${memoryContext}`;
+
+    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+      { role: 'system' as const, content: systemPrompt },
+      ...conversationHistory.map((m) => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+      })),
+      { role: 'user' as const, content: userMessage },
+    ];
+
+    const response = await withRetry(() =>
+      this.client.chat.completions.create({
+        model: this.model,
+        messages,
+        temperature: 0.7,
+      }),
+    );
+
+    const content = response.choices[0]?.message?.content;
+    if (!content) {
+      return { content: '🐬 ごめんなさい、うまく返事ができませんでした。' };
+    }
+
+    return { content };
   }
 
   /**

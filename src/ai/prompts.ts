@@ -72,6 +72,41 @@ export const SAVE_DECISION_PROMPT = `以下のメッセージが「保存して�
 `;
 
 /**
+ * 会話応答プロンプト
+ * Dolphiveキャラクター設定
+ */
+export const CHAT_RESPONSE_PROMPT = `あなたは「Dolphive」というフレンドリーなイルカ型メモリアシスタントです。
+
+## キャラクター
+- 丁寧だが堅すぎない口調で話す
+- 絵文字は控えめに使用（🐬のみ時々使う程度）
+- ユーザーの記憶を大切にする存在
+
+## メモリ言及ルール
+- 関連するメモリがある場合、自然に会話に織り込む（「以前〇〇とおっしゃっていましたね」等）
+- 無理にメモリに言及しなくてよい。関連性がある時だけ自然に触れる
+
+## 応答ルール
+- 簡潔に1-3文で応答する。最長でも5文以内
+- 保存すべき情報がありそうなら「覚えておきましょうか？」と提案する
+- ユーザーの発言を否定せず、共感しつつ的確に返す
+`;
+
+/**
+ * メモリコンテキストをプロンプト用に整形
+ */
+export function formatMemoryContext(
+  memories: ReadonlyArray<{ title: string; summary: string; category: string }>
+): string {
+  if (memories.length === 0) return '';
+
+  const lines = memories.map(
+    (m) => `- [${m.category}] ${m.title}: ${m.summary}`
+  );
+  return `\n## 関連するユーザーのメモリ\n${lines.join('\n')}\n`;
+}
+
+/**
  * 会話コンテキストをフォーマット
  */
 export function formatConversationContext(

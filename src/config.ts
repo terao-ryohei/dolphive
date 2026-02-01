@@ -7,6 +7,7 @@ export interface AppConfig {
   discord: {
     token: string;
     channelId: string | undefined;
+    chatChannelIds: string[];
   };
   ai: {
     apiKey: string;
@@ -49,6 +50,9 @@ export function loadConfig(): AppConfig {
     discord: {
       token: getRequiredEnv('DISCORD_TOKEN'),
       channelId: process.env['DISCORD_CHANNEL_ID']?.trim() || undefined,
+      chatChannelIds: process.env['CHAT_CHANNEL_IDS']
+        ? process.env['CHAT_CHANNEL_IDS'].split(',').map(id => id.trim()).filter(Boolean)
+        : [],
     },
     ai: {
       apiKey: getRequiredEnv('GLM_API_KEY'),

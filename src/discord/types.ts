@@ -10,6 +10,8 @@ export interface BotConfig {
   token: string;
   /** 監視対象チャンネルID */
   channelId: string | undefined;
+  /** 会話応答対象チャンネルID一覧 */
+  chatChannelIds: string[];
 }
 
 /**

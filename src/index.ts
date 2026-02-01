@@ -34,6 +34,7 @@ async function main(): Promise<void> {
     {
       token: config.discord.token,
       channelId: config.discord.channelId,
+      chatChannelIds: config.discord.chatChannelIds,
     },
     memoryManager,
     aiClient,
@@ -67,6 +68,15 @@ async function main(): Promise<void> {
     console.log(`Watching channel: ${config.discord.channelId}`);
   } else {
     console.log('Watching all guild text channels');
+  }
+  if (config.discord.chatChannelIds.length > 0) {
+    console.log(`Chat response enabled for channels: ${config.discord.chatChannelIds.join(', ')}`);
+    if (config.discord.channelId) {
+      const outOfScope = config.discord.chatChannelIds.filter(id => id !== config.discord.channelId);
+      if (outOfScope.length > 0) {
+        console.warn(`Warning: CHAT_CHANNEL_IDS ${outOfScope.join(', ')} are outside DISCORD_CHANNEL_ID scope and will be ignored`);
+      }
+    }
   }
   console.log('Press Ctrl+C to stop.');
 }

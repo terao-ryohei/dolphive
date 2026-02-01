@@ -37,6 +37,8 @@ export class MemoryBot {
   private commandHandler: CommandHandler;
   private state: BotState;
   private pendingMemories: Map<string, { memory: GeneratedMemory; message: Message }> = new Map();
+  private chatCooldowns: Map<string, number> = new Map();
+  private static readonly CHAT_COOLDOWN_MS = 3000;
 
   constructor(
     config: BotConfig,
@@ -259,6 +261,19 @@ export class MemoryBot {
       }
     }
 
+    // 会話応答チャンネル判定（排他条件: コマンド/カテゴリは上で処理済み）
+    if (this.config.chatChannelIds.length > 0 && this.config.chatChannelIds.includes(message.channel.id)) {
+      // 保存トリガーチェック（メモ優先: 保存トリガー検出時は応答しない）
+      const decision = await this.aiClient.shouldSaveMemory(message.content);
+      if (decision.shouldSave) {
+        console.log(`[KPI] chat_channel_save_trigger: ${decision.reason}`);
+        await this.handleAutoSaveWithPreview(message);
+        return;
+      }
+      await this.handleChatResponse(message);
+      return;
+    }
+
     // 自動保存トリガー検出（従来フロー）
     await this.checkAutoSave(message);
   }
@@ -409,6 +424,56 @@ export class MemoryBot {
     console.log('Stopping Memory Bot...');
     this.state.isRunning = false;
     await this.client.destroy();
+  }
+
+  /**
+   * 会話応答を処理
+   */
+  private async handleChatResponse(message: Message): Promise<void> {
+    try {
+      // クールダウン制御
+      const now = Date.now();
+      const lastResponse = this.chatCooldowns.get(message.channel.id);
+      if (lastResponse && now - lastResponse < MemoryBot.CHAT_COOLDOWN_MS) {
+        return;
+      }
+
+      console.log(`[KPI] chat_response_attempt channel:${message.channel.id}`);
+
+      // 直近15メッセージを会話コンテキストとして取得
+      const channel = message.channel as TextChannel;
+      const recentMessages = await channel.messages.fetch({ limit: 15, before: message.id });
+      const conversationHistory: { role: 'user' | 'assistant'; content: string }[] = Array.from(recentMessages.values())
+        .filter((m) => m.content)
+        .reverse()
+        .map((m) => ({
+          role: m.author.bot ? 'assistant' as const : 'user' as const,
+          content: m.content,
+        }));
+
+      // RAG: memoryManager で関連メモリを検索（上限3件）
+      const guildId = message.guild?.id ?? 'dm';
+      const searchResults = await this.memoryManager.searchMemories(message.content, guildId);
+      const relatedMemories = searchResults.slice(0, 3).map((r) => ({
+        title: r.frontmatter.title,
+        summary: r.frontmatter.summary,
+        category: r.frontmatter.type,
+      }));
+
+      // AI応答生成
+      const response = await this.aiClient.generateChatResponse(
+        message.content,
+        conversationHistory,
+        relatedMemories,
+      );
+
+      await message.reply(response.content);
+      this.chatCooldowns.set(message.channel.id, Date.now());
+
+      console.log(`[KPI] chat_response_success memories_used:${relatedMemories.length}`);
+    } catch (error) {
+      console.error('Chat response error:', error);
+    }
   }
 
   /**

@@ -2,67 +2,151 @@
 
 Dolphin（イルカ）+ Archive（保管庫）= イルカのように賢く記憶を保管するサービス。
 
-Discord BotからAI経由でメモをGitHubに自動保存するシステム。
+Discord上の会話をAIが自動分析し、GitHubリポジトリにMarkdown形式で保存するメモリボット。
 
-## 概要
+## 主な特徴
 
-- Discordでの会話から重要な情報をAI（GLM-4）が抽出
-- Markdown形式でGitHubリポジトリに自動保存
-- カテゴリ分類、タグ付け、要約を自動生成
+- **サイレント保存**: 会話の流れを止めず、プレビュー確認後にワンクリックで保存
+- **AI自動判定**: 保存が必要な発言をAI（GLM-4互換）が自動検出
+- **カテゴリ自動分類**: チャンネル名から自動でカテゴリ判定、タグ・要約も自動生成
+- **マルチサーバー対応**: サーバーごとにメモリを分離して管理
+- **GitHub保存**: すべてのメモリはGitHubリポジトリにMarkdownとしてコミット
 
-## 新機能 (v1.1.0 / cmd_009)
+## コマンド一覧
 
-| # | 機能 | 概要 |
-|---|------|------|
-| 1 | discord.js v15 対応 | dev版discord.jsへのマイグレーション |
-| 2 | エラーリトライ機構 | 指数バックオフ + HTTP 429 rate limit 自動リトライ |
-| 3 | !categories コマンド | カテゴリ別メモリ件数をEmbed表示 |
-| 4 | マルチサーバー対応 | Guild別メモリ分離（`memory/{guildId}/...`）+ 後方互換 |
-| 5 | 検索性能改善 | ローカルインデックス方式による高速検索 |
-| 6 | メモリ削除/編集 | `!delete`, `!edit`, `/delete`, `/edit` コマンド追加 |
-| 7 | DM対応 | ダイレクトメッセージでのBot利用が可能に |
-| 8 | 画像メタデータ記録 | 添付画像のURL/ファイル名/サイズを自動記録 |
-| 9 | リマインダー機能 | `!remind`, `/remind` で時刻指定リマインドを設定 |
+### テキストコマンド（`!` プレフィックス）
 
-### 技術的な変更点
+| コマンド | 説明 | 例 |
+|---------|------|-----|
+| `!save [カテゴリ]` | 直前の会話を保存（カテゴリ指定は任意） | `!save` / `!save daily` |
+| `!search <キーワード>` | メモリをキーワード検索 | `!search 買い物` |
+| `!recent` | 最近のメモリを5件表示 | `!recent` |
+| `!categories` | カテゴリ別メモリ件数を表示 | `!categories` |
+| `!delete <キーワード>` | メモリを検索して削除（1件一致時） | `!delete 古いメモ` |
+| `!edit <キーワード> \| <フィールド>=<値>` | メモリを検索して編集 | `!edit 買い物 \| title=新しいタイトル` |
+| `!remind <分>m <メッセージ>` | リマインダーを設定（1〜10080分） | `!remind 30m 会議の準備` |
+| `!help` | コマンド一覧を表示 | `!help` |
 
-- **discord.js v15 (dev版) 対応**: `ButtonBuilder` → `SuccessButtonBuilder`/`DangerButtonBuilder`、`ephemeral` → `MessageFlags.Ephemeral` 等のAPI変更に対応
-- **マルチサーバー対応**: メモリ保存パスを `memory/{guildId}/{category}/...` に変更。既存の `memory/{category}/...` からの自動マイグレーション付き
-- **GitHub APIリトライ機構**: `withRetry` ユーティリティによる指数バックオフ。HTTP 429 の `Retry-After` ヘッダを尊重
-- **DM対応**: `DirectMessages` intent を追加。DMではチャンネルカテゴリ判定をスキップし、コマンド応答と自動保存トリガーが動作
-- **画像対応**: 添付画像のメタデータ（URL/ファイル名/サイズ/contentType）をAIプロンプトに含め、`images` カテゴリとして保存を推奨
+`!edit` の編集可能フィールド: `title`, `summary`, `tags`（tagsはカンマ区切り: `tags=買い物,食品,週末`）
 
-## セットアップ
+### スラッシュコマンド（`/` プレフィックス）
 
-### 1. 依存パッケージのインストール
+| コマンド | 引数 | 説明 |
+|---------|------|------|
+| `/search` | `query`（必須）, `category`（任意） | メモリを検索。5件以上は「もっと見る」ボタンで次ページ表示 |
+| `/delete` | `keyword`（必須） | メモリを検索して確認ボタン付きで削除 |
+| `/edit` | `keyword`（必須）, `field`（必須: title/summary/tags）, `value`（必須） | メモリを検索して編集 |
+| `/remind` | `message`（必須）, `minutes`（必須: 1〜10080） | リマインダーを設定 |
 
-```bash
-npm install
-```
+## 自動保存の仕組み
 
-### 2. 環境変数の設定
+Dolphiveには4つの保存トリガーがある。
 
-`.env.example`を`.env`にコピーして編集:
+### 1. カテゴリチャンネルでの即時自動保存
+
+チャンネル名にカテゴリキーワードが含まれている場合、そのチャンネルでの発言は**AI判定をスキップ**して即座にプレビュー表示される。
+
+| カテゴリ | キーワード |
+|---------|-----------|
+| `daily` | daily, 日記 |
+| `ideas` | ideas, idea, アイデア |
+| `research` | research, 調査 |
+| `images` | images, image, 画像 |
+| `logs` | logs, log, 作業ログ |
+| `schedule` | schedule, 予定 |
+| `tasks` | tasks, task, タスク |
+
+チャンネル名は正規化される（全角→半角変換、記号・絵文字の除去）。例: `#📝daily-log` → `daily` カテゴリ
+
+### 2. キーワードトリガーによる自動保存
+
+以下のキーワードを含むメッセージは、AI呼び出しなしで即座に保存対象と判定される:
+
+「覚えといて」「覚えておいて」「メモして」「メモしといて」「保存して」「記録して」「忘れないように」
+
+### 3. AI判定による自動保存
+
+カテゴリチャンネル以外で、上記キーワードにも該当しないメッセージは、AIが保存の必要性を自動判定する。AIが「保存すべき」と判断した場合のみプレビューが表示される。
+
+### 4. 📝リアクションによる保存
+
+任意のメッセージに📝（メモ）リアクションを付けると、そのメッセージを保存対象としてプレビューが表示される。
+
+### 保存確認フロー（全トリガー共通）
+
+上記いずれのトリガーでも、保存前に必ず**プレビュー確認**が表示される:
+
+1. AIが会話内容からタイトル・カテゴリ・タグ・要約を自動生成
+2. Embed形式でプレビュー表示（タイトル、カテゴリ、タグ、要約）
+3. 「💾 保存」または「❌ キャンセル」ボタンで確定
+4. 30秒操作がなければ自動キャンセル
+
+## 環境変数
+
+`.env.example` を `.env` にコピーして編集する。
 
 ```bash
 cp .env.example .env
 ```
 
-必要な値:
+### 必須
 
-- `DISCORD_TOKEN`: Discord Botトークン
-- `DISCORD_CHANNEL_ID`: 監視対象チャンネルID（未設定時はBOTが参加している全サーバーの全テキストチャンネルを自動監視。設定時は指定チャンネルのみ監視）
-- `GLM_API_KEY`: GLM-4 APIキー
-- `GITHUB_TOKEN`: GitHub Personal Access Token
-- `GITHUB_OWNER`: GitHubユーザー名
-- `GITHUB_REPO`: メモリ保存先リポジトリ名
+| 変数名 | 説明 |
+|--------|------|
+| `DISCORD_TOKEN` | Discord Botトークン |
+| `GLM_API_KEY` | GLM-4互換APIのAPIキー |
+| `GITHUB_TOKEN` | GitHub Personal Access Token（`repo`スコープ必須） |
+| `GITHUB_OWNER` | GitHubユーザー名またはOrg名 |
+| `GITHUB_REPO` | メモリ保存先リポジトリ名 |
+
+### 任意
+
+| 変数名 | デフォルト値 | 説明 |
+|--------|------------|------|
+| `DISCORD_CHANNEL_ID` | （なし） | 監視対象チャンネルID。未設定時は全チャンネルを監視 |
+| `GLM_BASE_URL` | `https://open.bigmodel.cn/api/paas/v4` | AI APIのベースURL |
+| `GLM_MODEL` | `glm-4` | 使用するモデル名 |
+| `GITHUB_TEMPLATE_OWNER` | `terao-ryohei` | テンプレートリポジトリのオーナー |
+| `GITHUB_TEMPLATE_REPO` | `myLife` | テンプレートリポジトリ名 |
+| `GITHUB_REPO_PRIVATE` | `true` | 自動作成するリポジトリをprivateにするか |
+
+> **注意: `GLM_BASE_URL` にはベースURLのみを指定すること。`/chat/completions` は含めない。**
+> OpenAI SDK が自動でエンドポイントパスを付与するため、含めるとURLが二重化して404エラーになる。
+>
+> - 正: `https://api.example.com/api/paas/v4`
+> - 誤: `https://api.example.com/api/paas/v4/chat/completions`
+
+## セットアップ
+
+### 前提条件
+
+- Node.js 18以上
+- npm
+- GitHubアカウント（Personal Access Token）
+- Discord Botアカウント
+
+### 1. インストール
+
+```bash
+git clone <repository-url>
+cd myLife-bot
+npm install
+```
+
+### 2. 環境変数の設定
+
+```bash
+cp .env.example .env
+# .env を編集して必要な値を入力
+```
 
 ### 3. Discord Botの作成
 
-1. [Discord Developer Portal](https://discord.com/developers/applications)でアプリケーション作成
+1. [Discord Developer Portal](https://discord.com/developers/applications) でアプリケーション作成
 2. Botタブでトークンを取得
-3. OAuth2 > URL Generatorで招待URL生成（権限: Send Messages, Read Message History）
-4. サーバーにBotを招待
+3. 必要なIntent: `Guilds`, `GuildMessages`, `MessageContent`, `GuildMessageReactions`, `DirectMessages`
+4. OAuth2 > URL Generatorで招待URL生成（権限: Send Messages, Read Message History, Embed Links）
+5. サーバーにBotを招待
 
 ### 4. ビルドと起動
 
@@ -71,220 +155,21 @@ npm run build
 npm start
 ```
 
-## コマンド
-
-### テキストコマンド
-
-| コマンド | 説明 |
-|---------|------|
-| `!save` | 直前の会話をメモリとして保存 |
-| `!search <キーワード>` | メモリを検索 |
-| `!recent` | 最近のメモリを表示 |
-| `!categories` | カテゴリ別メモリ件数を表示 |
-| `!delete <検索語>` | メモリを検索して削除 |
-| `!edit <検索語>` | メモリを検索して編集 |
-| `!remind <日時> <内容>` | リマインダーを設定 |
-| `!help` | ヘルプを表示 |
-
-### スラッシュコマンド
-
-| コマンド | 説明 |
-|---------|------|
-| `/search <キーワード>` | メモリを検索（ボタンUI付き） |
-| `/delete <検索語>` | メモリを検索して削除 |
-| `/edit <検索語>` | メモリを検索して編集 |
-| `/remind <日時> <内容>` | リマインダーを設定 |
-
-## チャンネル名によるカテゴリ自動判定
-
-チャンネル名にカテゴリキーワードが含まれている場合、そのチャンネルでの発言は対応するカテゴリとして自動保存されます。
-
-| カテゴリ | キーワード（英語） | キーワード（日本語） |
-|---------|-------------------|---------------------|
-| `daily` | daily | 日記 |
-| `ideas` | ideas, idea | アイデア |
-| `research` | research | 調査 |
-| `images` | images, image | 画像 |
-| `logs` | logs, log | 作業ログ |
-| `schedule` | schedule | 予定 |
-| `tasks` | tasks, task | タスク |
-
-- チャンネル名は正規化されます（全角→半角変換、記号・絵文字の除去）
-- 例: `#📝daily-log` → `daily` カテゴリ、`#アイデア` → `ideas` カテゴリ
-- マッチしないチャンネルではAIが自動判定（下記「自動保存トリガー」参照）
-
-## 自動保存トリガー
-
-以下のキーワードを含むメッセージで自動保存:
-
-- 「覚えといて」「覚えておいて」
-- 「メモして」「メモしといて」
-- 「保存して」「記録して」
-- 「忘れないように」
-
-## メモリカテゴリ
-
-| カテゴリ | 説明 |
-|---------|------|
-| `daily` | 日常の出来事、日記 |
-| `ideas` | アイデア、思いつき |
-| `research` | 調査結果、技術メモ |
-| `images` | 画像に関するメモ |
-| `logs` | 作業ログ、進捗 |
-| `schedule` | スケジュール、予定、約束 |
-| `tasks` | タスク、TODO、やること |
-
-## ファイル構造
-
-```
-src/
-├── index.ts              # エントリポイント
-├── config.ts             # 設定管理
-├── github/               # GitHub API連携
-│   ├── client.ts         # GitHub APIクライアント
-│   ├── memory.ts         # メモリ管理（マルチサーバー対応）
-│   ├── index.ts          # エクスポート
-│   └── types.ts          # 型定義
-├── discord/              # Discord Bot
-│   ├── bot.ts            # Botメインクラス（DM・画像対応）
-│   ├── commands.ts       # テキストコマンド処理
-│   ├── slash-commands.ts # スラッシュコマンド処理
-│   ├── channel-category.ts # チャンネル名カテゴリ判定
-│   ├── index.ts          # エクスポート
-│   └── types.ts          # 型定義
-├── ai/                   # AI統合
-│   ├── client.ts         # GLM-4 APIクライアント（画像メタデータ対応）
-│   ├── prompts.ts        # プロンプト定義
-│   ├── index.ts          # エクスポート
-│   └── types.ts          # 型定義
-└── utils/                # ユーティリティ
-    └── retry.ts          # リトライ機構（指数バックオフ）
-```
-
-## 保存形式
-
-メモリは以下の形式でMarkdownファイルとして保存:
-
-```markdown
----
-title: タイトル
-date: 2024-01-01
-tags: [tag1, tag2]
-source: discord
-type: ideas
-summary: 要約
----
-
-本文（Markdown）
-```
-
-保存先: `memory/{guildId}/{category}/{YYYY-MM-DD}-{uuid}.md`
-（DMからの保存: `memory/dm/{category}/{YYYY-MM-DD}-{uuid}.md`）
-
-### スケジュール追加フィールド（type: schedule）
-
-```yaml
-start_date: "2026-02-01"   # 必須: 開始日
-end_date: "2026-02-01"     # 任意: 終了日
-start_time: "10:00"        # 任意: 開始時刻
-end_time: "11:00"          # 任意: 終了時刻
-location: "会議室A"         # 任意: 場所
-recurring: "none"          # 任意: none/daily/weekly/monthly/yearly
-```
-
-### タスク追加フィールド（type: tasks）
-
-```yaml
-status: "todo"             # 必須: todo/doing/done
-due_date: "2026-02-01"     # 任意: 期限
-priority: "medium"         # 任意: high/medium/low
-```
-
-## 開発
+### 開発モード
 
 ```bash
-# 開発モード（ファイル変更監視）
-npm run dev
-
-# ビルド
-npm run build
-
-# クリーン
-npm run clean
+npm run dev    # TypeScriptファイル変更を監視して自動コンパイル
+npm run clean  # dist/ を削除
 ```
 
-## AWS Lightsail へのデプロイ（推奨）
-
-EC2より設定がシンプルで、固定料金のため費用が予測しやすい。
-
-### 費用プラン
-
-| プラン | スペック | 費用 |
-|--------|---------|------|
-| $3.50/月 | 512MB RAM, 1 vCPU | Discord Bot に十分 |
-| $5/月 | 1GB RAM, 1 vCPU | 余裕を持たせたい場合 |
-
-### 1. Lightsailインスタンスの作成
-
-1. [AWS Lightsail コンソール](https://lightsail.aws.amazon.com/) にアクセス
-2. 「インスタンスの作成」をクリック
-3. 設定:
-   - **リージョン**: Tokyo (ap-northeast-1)
-   - **プラットフォーム**: Linux/Unix
-   - **ブループリント**: OS のみ → **Amazon Linux 2023**
-   - **インスタンスプラン**: $3.50 USD/月（512MB）
-   - **インスタンス名**: `dolphive`
-4. 「インスタンスの作成」をクリック
-
-### 2. SSH接続
-
-Lightsailコンソールから「ブラウザベースSSH接続」ボタンをクリック
-（または、SSHキーをダウンロードしてターミナルから接続）
-
-### 3. サーバー環境のセットアップ
+## 本番デプロイ（PM2）
 
 ```bash
-# Node.js と git をインストール
-sudo dnf install -y nodejs npm git
-
-# Node.js バージョン確認（18以上が必要）
-node --version
-```
-
-### 4. ボットのデプロイ
-
-```bash
-# リポジトリをクローン
-git clone <repository-url>
-cd myLife-bot
-
-# 依存パッケージインストール
-npm install
-
-# ビルド
-npm run build
-
-# 環境変数を設定
-cp .env.example .env
-nano .env  # 必要な値を入力
-```
-
-### 5. PM2 でプロセス管理（常時稼働）
-
-```bash
-# PM2 をグローバルインストール
 sudo npm install -g pm2
-
-# ボットを起動（ecosystem.config.cjs を使用）
 pm2 start ecosystem.config.cjs
-
-# 自動再起動設定（サーバー再起動時も自動復帰）
-pm2 startup
-# 表示されたコマンドをコピーして実行
+pm2 startup    # サーバー再起動時の自動復帰
 pm2 save
 ```
-
-### 6. PM2 コマンド
 
 | コマンド | 説明 |
 |---------|------|
@@ -293,67 +178,63 @@ pm2 save
 | `pm2 restart dolphive` | 再起動 |
 | `pm2 stop dolphive` | 停止 |
 
-### 7. 動作確認
+## メモリカテゴリ
 
-1. `pm2 status` でボットが `online` 状態か確認
-2. Discordで `!help` コマンドを送信して応答を確認
-3. `pm2 logs dolphive` でログにエラーがないか確認
+| カテゴリ | 説明 | 追加フィールド |
+|---------|------|---------------|
+| `daily` | 日常の出来事、日記 | - |
+| `ideas` | アイデア、思いつき | - |
+| `research` | 調査結果、技術メモ | - |
+| `images` | 画像に関するメモ | - |
+| `logs` | 作業ログ、進捗 | - |
+| `schedule` | スケジュール、予定 | `start_date`, `end_date`, `start_time`, `end_time`, `location`, `recurring` |
+| `tasks` | タスク、TODO | `status`(todo/doing/done), `due_date`, `priority`(high/medium/low) |
 
+## 保存形式
+
+メモリは `memory/{guildId}/{category}/{YYYY-MM-DD}-{uuid}.md` に保存される。
+DMからの保存は `memory/dm/{category}/...` に保存。
+
+```markdown
+---
+title: タイトル
+date: 2026-02-01
+tags: [tag1, tag2]
+source: discord
+type: daily
+summary: 要約テキスト
 ---
 
-## AWS EC2 へのデプロイ（代替案）
-
-より柔軟な構成が必要な場合や、無料枠を利用したい場合はEC2を使用。
-
-### Lightsail vs EC2 比較
-
-| 項目 | Lightsail | EC2 |
-|------|-----------|-----|
-| 料金 | $3.50/月〜（固定） | 無料枠後 $7-8.5/月 |
-| 設定難易度 | 簡単 | やや複雑 |
-| セキュリティグループ | 自動設定済み | 手動設定必要 |
-| 静的IP | 無料で付属 | 別途 Elastic IP |
-| 適用ケース | 小規模アプリ | 柔軟な構成が必要な場合 |
-
-### 1. EC2インスタンスの作成
-
-- **AMI**: Amazon Linux 2023 または Ubuntu 22.04
-- **インスタンスタイプ**: t2.micro (無料枠) または t3.micro
-- **ストレージ**: 8GB (デフォルト)
-- **セキュリティグループ**: SSHポート22のみ許可
-
-### 2. サーバー環境のセットアップ
-
-```bash
-# Amazon Linux 2023
-sudo dnf install -y nodejs npm git
-
-# Ubuntu 22.04
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs git
+本文（Markdown形式）
 ```
 
-### 3. ボットのデプロイ
+## ファイル構造
 
-```bash
-git clone <repository-url>
-cd myLife-bot
-npm install
-npm run build
-cp .env.example .env
-nano .env  # 必要な値を入力
 ```
-
-### 4. PM2 でプロセス管理
-
-Lightsailセクションの「5. PM2 でプロセス管理」と同じ手順を実行。
-
-### 費用目安
-
-| サービス | 費用 |
-|---------|------|
-| EC2 t2.micro | 無料枠(750時間/月)、以降約$8.5/月 |
-| EC2 t3.micro | 約$7.5/月 |
+src/
+├── index.ts                # エントリポイント（初期化・起動）
+├── config.ts               # 環境変数の読み込みとバリデーション
+├── reminder.ts             # リマインダー機能（GitHub永続化・60秒間隔チェック）
+├── discord/
+│   ├── bot.ts              # Botメインクラス（イベントハンドラ・自動保存ロジック）
+│   ├── commands.ts         # テキストコマンド処理（!save, !search 等）
+│   ├── slash-commands.ts   # スラッシュコマンド処理（/search, /delete 等）
+│   ├── channel-category.ts # チャンネル名→カテゴリ判定（全角正規化対応）
+│   ├── index.ts            # エクスポート
+│   └── types.ts            # 型定義
+├── github/
+│   ├── client.ts           # GitHub Contents APIクライアント（リトライ付き）
+│   ├── memory.ts           # メモリ管理（保存・検索・インデックス・旧パス互換）
+│   ├── index.ts            # エクスポート
+│   └── types.ts            # 型定義
+├── ai/
+│   ├── client.ts           # AI APIクライアント（OpenAI互換・画像メタデータ対応）
+│   ├── prompts.ts          # メモリ生成・保存判定プロンプト
+│   ├── index.ts            # エクスポート
+│   └── types.ts            # 型定義
+└── utils/
+    └── retry.ts            # 指数バックオフリトライ（429 Retry-After対応）
+```
 
 ## ライセンス
 

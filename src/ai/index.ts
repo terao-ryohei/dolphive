@@ -11,4 +11,4 @@ export type {
 export { AIClient } from './client.js';
 
 // Prompts
-export { MEMORY_GENERATION_PROMPT, SAVE_DECISION_PROMPT, formatConversationContext } from './prompts.js';
+export { MEMORY_GENERATION_PROMPT, SAVE_DECISION_PROMPT, CHAT_RESPONSE_PROMPT, formatConversationContext, formatMemoryContext } from './prompts.js';
