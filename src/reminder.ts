@@ -20,6 +20,12 @@ const MAX_FIRE_PER_TICK = 10;
 const getRemindersPath = (guildId: string): string =>
   `memory/${guildId}/.reminders.json`;
 
+const DM_SCOPES_PATH = 'memory/.dm_reminder_scopes.json';
+
+type DmScopesFile = {
+  readonly scopes: string[];
+};
+
 const generateId = (): string =>
   `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -32,6 +38,46 @@ let intervalId: ReturnType<typeof setInterval> | null = null;
 const getGithubClient = (): GitHubClient => {
   if (!githubClient) throw new Error('Reminder not initialized. Call initReminder first.');
   return githubClient;
+};
+
+const loadDmScopes = async (): Promise<string[]> => {
+  const client = getGithubClient();
+  const fileData = await client.getFile(DM_SCOPES_PATH);
+  if (!fileData) return [];
+  try {
+    const parsed = JSON.parse(fileData.content) as DmScopesFile;
+    return Array.isArray(parsed.scopes) ? parsed.scopes : [];
+  } catch {
+    return [];
+  }
+};
+
+const addDmScope = async (scopeId: string): Promise<void> => {
+  const client = getGithubClient();
+  const fileData = await client.getFile(DM_SCOPES_PATH);
+  let scopes: string[] = [];
+  let sha: string | undefined;
+
+  if (fileData) {
+    sha = fileData.sha;
+    try {
+      const parsed = JSON.parse(fileData.content) as DmScopesFile;
+      scopes = Array.isArray(parsed.scopes) ? parsed.scopes : [];
+    } catch {
+      scopes = [];
+    }
+  }
+
+  if (scopes.includes(scopeId)) return;
+
+  scopes.push(scopeId);
+  const content = JSON.stringify({ scopes } satisfies DmScopesFile, null, 2);
+
+  if (sha) {
+    await client.updateFile(DM_SCOPES_PATH, content, 'Update DM reminder scopes', sha);
+  } else {
+    await client.createFile(DM_SCOPES_PATH, content, 'Create DM reminder scopes');
+  }
 };
 
 const loadRemindersForGuild = async (guildId: string): Promise<ReminderEntry[]> => {
@@ -86,7 +132,8 @@ export const initReminder = (client: Client, githubConfig: GitHubClientConfig): 
  * 起動時に全ギルドのリマインダーをキャッシュに読み込む
  */
 export const loadAllReminders = async (guildIds: string[]): Promise<void> => {
-  const allIds = guildIds.includes('dm') ? guildIds : [...guildIds, 'dm'];
+  const dmScopes = await loadDmScopes();
+  const allIds = [...new Set([...guildIds, ...dmScopes])];
   await Promise.all(allIds.map((id) => loadRemindersForGuild(id)));
 };
 
@@ -112,6 +159,9 @@ export const setReminder = async (params: {
   message: string;
   triggerTime: Date;
 }): Promise<void> => {
+  if (params.guildId.startsWith('dm-')) {
+    await addDmScope(params.guildId);
+  }
   const entries = await loadRemindersForGuild(params.guildId);
   const newEntry: ReminderEntry = {
     id: generateId(),
