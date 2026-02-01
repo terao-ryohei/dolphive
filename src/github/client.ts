@@ -1,5 +1,6 @@
 import { Octokit } from '@octokit/rest';
 import type { GitHubClientConfig, CreateFileResult, FileInfo } from './types.js';
+import { withRetry } from '../utils/retry.js';
 
 /**
  * GitHub APIクライアント
@@ -24,7 +25,7 @@ export class GitHubClient {
 
   async repoExists(): Promise<boolean> {
     try {
-      await this.octokit.repos.get({ owner: this.owner, repo: this.repo });
+      await withRetry(() => this.octokit.repos.get({ owner: this.owner, repo: this.repo }));
       return true;
     } catch (error: unknown) {
       if (error instanceof Error && 'status' in error && (error as { status: number }).status === 404) {
@@ -38,15 +39,19 @@ export class GitHubClient {
     if (!this.templateOwner || !this.templateRepo) {
       throw new Error('Template owner and repo must be configured to create from template.');
     }
+    const templateOwner = this.templateOwner;
+    const templateRepo = this.templateRepo;
     try {
-      await this.octokit.repos.createUsingTemplate({
-        template_owner: this.templateOwner,
-        template_repo: this.templateRepo,
-        owner: this.owner,
-        name: this.repo,
-        private: this.repoPrivate,
-        description: `Created from template ${this.templateOwner}/${this.templateRepo}`,
-      });
+      await withRetry(() =>
+        this.octokit.repos.createUsingTemplate({
+          template_owner: templateOwner,
+          template_repo: templateRepo,
+          owner: this.owner,
+          name: this.repo,
+          private: this.repoPrivate,
+          description: `Created from template ${this.templateOwner}/${this.templateRepo}`,
+        }),
+      );
     } catch (error: unknown) {
       if (error instanceof Error && 'status' in error) {
         const status = (error as { status: number }).status;
@@ -105,13 +110,15 @@ export class GitHubClient {
       throw new Error(`File already exists: ${path}. Overwriting is not allowed.`);
     }
 
-    const response = await this.octokit.repos.createOrUpdateFileContents({
-      owner: this.owner,
-      repo: this.repo,
-      path,
-      message,
-      content: Buffer.from(content, 'utf-8').toString('base64'),
-    });
+    const response = await withRetry(() =>
+      this.octokit.repos.createOrUpdateFileContents({
+        owner: this.owner,
+        repo: this.repo,
+        path,
+        message,
+        content: Buffer.from(content, 'utf-8').toString('base64'),
+      }),
+    );
 
     return {
       path: response.data.content?.path ?? path,
@@ -125,11 +132,13 @@ export class GitHubClient {
    */
   async fileExists(path: string): Promise<boolean> {
     try {
-      await this.octokit.repos.getContent({
-        owner: this.owner,
-        repo: this.repo,
-        path,
-      });
+      await withRetry(() =>
+        this.octokit.repos.getContent({
+          owner: this.owner,
+          repo: this.repo,
+          path,
+        }),
+      );
       return true;
     } catch (error) {
       if (error instanceof Error && 'status' in error && error.status === 404) {
@@ -144,11 +153,13 @@ export class GitHubClient {
    */
   async getFile(path: string): Promise<{ content: string; sha: string } | null> {
     try {
-      const response = await this.octokit.repos.getContent({
-        owner: this.owner,
-        repo: this.repo,
-        path,
-      });
+      const response = await withRetry(() =>
+        this.octokit.repos.getContent({
+          owner: this.owner,
+          repo: this.repo,
+          path,
+        }),
+      );
 
       const data = response.data;
       if (Array.isArray(data) || data.type !== 'file') {
@@ -170,11 +181,13 @@ export class GitHubClient {
    */
   async listFiles(dirPath: string): Promise<FileInfo[]> {
     try {
-      const response = await this.octokit.repos.getContent({
-        owner: this.owner,
-        repo: this.repo,
-        path: dirPath,
-      });
+      const response = await withRetry(() =>
+        this.octokit.repos.getContent({
+          owner: this.owner,
+          repo: this.repo,
+          path: dirPath,
+        }),
+      );
 
       const data = response.data;
       if (!Array.isArray(data)) {
@@ -204,5 +217,47 @@ export class GitHubClient {
   async listFilesRecursive(dirPaths: string[]): Promise<FileInfo[]> {
     const results = await Promise.all(dirPaths.map((dir) => this.listFiles(dir)));
     return results.flat();
+  }
+
+  /**
+   * 既存ファイルを更新してコミット
+   */
+  async updateFile(
+    path: string,
+    content: string,
+    message: string,
+    sha: string,
+  ): Promise<CreateFileResult> {
+    const response = await withRetry(() =>
+      this.octokit.repos.createOrUpdateFileContents({
+        owner: this.owner,
+        repo: this.repo,
+        path,
+        message,
+        content: Buffer.from(content, 'utf-8').toString('base64'),
+        sha,
+      }),
+    );
+
+    return {
+      path: response.data.content?.path ?? path,
+      sha: response.data.commit.sha ?? '',
+      commitUrl: response.data.commit.html_url ?? '',
+    };
+  }
+
+  /**
+   * ファイルを削除してコミット
+   */
+  async deleteFile(path: string, message: string, sha: string): Promise<void> {
+    await withRetry(() =>
+      this.octokit.repos.deleteFile({
+        owner: this.owner,
+        repo: this.repo,
+        path,
+        message,
+        sha,
+      }),
+    );
   }
 }

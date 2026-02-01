@@ -13,3 +13,4 @@ export type {
 // Classes
 export { GitHubClient } from './client.js';
 export { MemoryManager } from './memory.js';
+export type { MemoryUpdate } from './memory.js';

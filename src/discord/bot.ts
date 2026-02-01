@@ -6,19 +6,23 @@ import {
   Partials,
   EmbedBuilder,
   ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
+  SuccessButtonBuilder,
+  DangerButtonBuilder,
   ComponentType,
   PermissionFlagsBits,
   ChannelType,
+  MessageFlags,
 } from 'discord.js';
 import type { MemoryManager, CreateMemoryInput } from '../github/index.js';
 import type { MemoryCategory } from '../github/types.js';
 import type { AIClient, ConversationMessage } from '../ai/index.js';
+import type { ImageAttachment } from '../ai/client.js';
 import type { GeneratedMemory } from '../ai/types.js';
 import { CommandHandler } from './commands.js';
 import { detectCategoryFromChannel } from './channel-category.js';
-import { registerCommands, handleSearchInteraction, handleSearchButton } from './slash-commands.js';
+import { registerCommands, handleSearchInteraction, handleSearchButton, handleDeleteInteraction, handleEditInteraction, handleRemindInteraction } from './slash-commands.js';
+import { initReminder, loadAllReminders, startReminderChecker } from '../reminder.js';
+import type { GitHubClientConfig } from '../github/types.js';
 import type { BotConfig, BotState, MessageContext } from './types.js';
 
 /**
@@ -27,6 +31,7 @@ import type { BotConfig, BotState, MessageContext } from './types.js';
 export class MemoryBot {
   private client: Client;
   private config: BotConfig;
+  private githubConfig: GitHubClientConfig;
   private memoryManager: MemoryManager;
   private aiClient: AIClient;
   private commandHandler: CommandHandler;
@@ -36,9 +41,11 @@ export class MemoryBot {
   constructor(
     config: BotConfig,
     memoryManager: MemoryManager,
-    aiClient: AIClient
+    aiClient: AIClient,
+    githubConfig: GitHubClientConfig,
   ) {
     this.config = config;
+    this.githubConfig = githubConfig;
     this.memoryManager = memoryManager;
     this.aiClient = aiClient;
     this.commandHandler = new CommandHandler(memoryManager, aiClient, this.handleAutoSaveWithPreview.bind(this));
@@ -53,6 +60,7 @@ export class MemoryBot {
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMessageReactions,
+        GatewayIntentBits.DirectMessages,
       ],
       partials: [Partials.Message, Partials.Channel, Partials.Reaction],
     });
@@ -71,6 +79,15 @@ export class MemoryBot {
         await registerCommands(this.client);
       } catch (error) {
         console.error('Failed to register slash commands:', error);
+      }
+      try {
+        initReminder(this.client, this.githubConfig);
+        const guildIds = Array.from(this.client.guilds.cache.keys());
+        await loadAllReminders(guildIds);
+        startReminderChecker();
+        console.log('Reminder system initialized.');
+      } catch (error) {
+        console.error('Failed to initialize reminder system:', error);
       }
     });
 
@@ -133,6 +150,12 @@ export class MemoryBot {
       if (interaction.isChatInputCommand()) {
         if (interaction.commandName === 'search') {
           await handleSearchInteraction(interaction, this.memoryManager);
+        } else if (interaction.commandName === 'delete') {
+          await handleDeleteInteraction(interaction, this.memoryManager);
+        } else if (interaction.commandName === 'edit') {
+          await handleEditInteraction(interaction, this.memoryManager);
+        } else if (interaction.commandName === 'remind') {
+          await handleRemindInteraction(interaction);
         }
         return;
       }
@@ -149,16 +172,17 @@ export class MemoryBot {
         const messageId = customId.slice('save_confirm:'.length);
         const pending = this.pendingMemories.get(messageId);
         if (!pending) {
-          await interaction.reply({ content: 'この保存リクエストは期限切れです。', ephemeral: true });
+          await interaction.reply({ content: 'この保存リクエストは期限切れです。', flags: [MessageFlags.Ephemeral] });
           return;
         }
         if (interaction.user.id !== pending.message.author.id) {
-          await interaction.reply({ content: 'この操作は実行できません。', ephemeral: true });
+          await interaction.reply({ content: 'この操作は実行できません。', flags: [MessageFlags.Ephemeral] });
           return;
         }
         this.pendingMemories.delete(messageId);
         try {
           console.log('[KPI] save_attempt');
+          const guildId = pending.message.guild?.id ?? 'dm';
           const saved = await this.memoryManager.saveMemory({
             category: pending.memory.category,
             title: pending.memory.title,
@@ -174,7 +198,7 @@ export class MemoryBot {
             status: pending.memory.status as CreateMemoryInput['status'],
             dueDate: pending.memory.dueDate,
             priority: pending.memory.priority as CreateMemoryInput['priority'],
-          });
+          }, guildId);
           console.log('[KPI] save_success');
           await interaction.update({
             content:
@@ -197,7 +221,7 @@ export class MemoryBot {
         const messageId = customId.slice('save_cancel:'.length);
         const pendingCancel = this.pendingMemories.get(messageId);
         if (pendingCancel && interaction.user.id !== pendingCancel.message.author.id) {
-          await interaction.reply({ content: 'この操作は実行できません。', ephemeral: true });
+          await interaction.reply({ content: 'この操作は実行できません。', flags: [MessageFlags.Ephemeral] });
           return;
         }
         this.pendingMemories.delete(messageId);
@@ -213,11 +237,8 @@ export class MemoryBot {
     // 自分自身のメッセージは無視
     if (message.author.bot) return;
 
-    // Guild外メッセージ（DM等）は無視
-    if (!message.guild) return;
-
-    // 指定チャンネルがある場合、それ以外は無視
-    if (this.config.channelId && message.channel.id !== this.config.channelId) return;
+    // 指定チャンネルがある場合、それ以外は無視（DMは通す）
+    if (this.config.channelId && message.guild && message.channel.id !== this.config.channelId) return;
 
     const content = message.content.trim();
 
@@ -228,12 +249,14 @@ export class MemoryBot {
       return;
     }
 
-    // チャンネル名カテゴリ判定
-    const category = detectCategoryFromChannel((message.channel as TextChannel).name);
-    if (category) {
-      console.log('[KPI] save_auto');
-      await this.handleAutoSaveWithPreview(message, category);
-      return;
+    // チャンネル名カテゴリ判定（サーバーのみ、DMではスキップ）
+    if (message.guild) {
+      const category = detectCategoryFromChannel((message.channel as TextChannel).name);
+      if (category) {
+        console.log('[KPI] save_auto');
+        await this.handleAutoSaveWithPreview(message, category);
+        return;
+      }
     }
 
     // 自動保存トリガー検出（従来フロー）
@@ -292,6 +315,16 @@ export class MemoryBot {
 
       if (context.length === 0) return;
 
+      // 画像添付ファイルのメタデータ抽出
+      const imageAttachments: ImageAttachment[] = Array.from(message.attachments.values())
+        .filter(a => a.contentType?.startsWith('image/'))
+        .map(a => ({
+          url: a.url,
+          filename: a.name ?? 'unknown',
+          size: a.size,
+          contentType: a.contentType ?? 'image/unknown',
+        }));
+
       this.state.pendingRequests++;
       try {
         const memory = await this.aiClient.generateMemory({
@@ -301,7 +334,7 @@ export class MemoryBot {
             content: c.content,
             timestamp: c.timestamp,
           } as ConversationMessage)),
-        });
+        }, imageAttachments.length > 0 ? imageAttachments : undefined);
 
         if (category) {
           memory.category = category;
@@ -318,9 +351,9 @@ export class MemoryBot {
           .setDescription(memory.summary)
           .setColor(0x00bfff);
 
-        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-          new ButtonBuilder().setCustomId(`save_confirm:${message.id}`).setLabel('💾 保存').setStyle(ButtonStyle.Success),
-          new ButtonBuilder().setCustomId(`save_cancel:${message.id}`).setLabel('❌ キャンセル').setStyle(ButtonStyle.Danger),
+        const row = new ActionRowBuilder().addComponents(
+          new SuccessButtonBuilder().setCustomId(`save_confirm:${message.id}`).setLabel('💾 保存'),
+          new DangerButtonBuilder().setCustomId(`save_cancel:${message.id}`).setLabel('❌ キャンセル'),
         );
 
         const reply = await message.reply({ embeds: [embed], components: [row] });

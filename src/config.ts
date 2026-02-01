@@ -52,7 +52,7 @@ export function loadConfig(): AppConfig {
     },
     ai: {
       apiKey: getRequiredEnv('GLM_API_KEY'),
-      baseUrl: getOptionalEnv('GLM_BASE_URL', 'https://open.bigmodel.cn/api/paas/v4'),
+      baseUrl: getOptionalEnv('GLM_BASE_URL', 'https://open.bigmodel.cn/api/paas/v4').replace(/\/chat\/completions\/?$/, ''),
       model: getOptionalEnv('GLM_MODEL', 'glm-4'),
     },
     github: {

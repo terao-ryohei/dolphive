@@ -36,7 +36,8 @@ async function main(): Promise<void> {
       channelId: config.discord.channelId,
     },
     memoryManager,
-    aiClient
+    aiClient,
+    config.github,
   );
 
   // シャットダウンハンドラ

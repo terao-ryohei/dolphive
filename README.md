@@ -10,6 +10,28 @@ Discord BotからAI経由でメモをGitHubに自動保存するシステム。
 - Markdown形式でGitHubリポジトリに自動保存
 - カテゴリ分類、タグ付け、要約を自動生成
 
+## 新機能 (v1.1.0 / cmd_009)
+
+| # | 機能 | 概要 |
+|---|------|------|
+| 1 | discord.js v15 対応 | dev版discord.jsへのマイグレーション |
+| 2 | エラーリトライ機構 | 指数バックオフ + HTTP 429 rate limit 自動リトライ |
+| 3 | !categories コマンド | カテゴリ別メモリ件数をEmbed表示 |
+| 4 | マルチサーバー対応 | Guild別メモリ分離（`memory/{guildId}/...`）+ 後方互換 |
+| 5 | 検索性能改善 | ローカルインデックス方式による高速検索 |
+| 6 | メモリ削除/編集 | `!delete`, `!edit`, `/delete`, `/edit` コマンド追加 |
+| 7 | DM対応 | ダイレクトメッセージでのBot利用が可能に |
+| 8 | 画像メタデータ記録 | 添付画像のURL/ファイル名/サイズを自動記録 |
+| 9 | リマインダー機能 | `!remind`, `/remind` で時刻指定リマインドを設定 |
+
+### 技術的な変更点
+
+- **discord.js v15 (dev版) 対応**: `ButtonBuilder` → `SuccessButtonBuilder`/`DangerButtonBuilder`、`ephemeral` → `MessageFlags.Ephemeral` 等のAPI変更に対応
+- **マルチサーバー対応**: メモリ保存パスを `memory/{guildId}/{category}/...` に変更。既存の `memory/{category}/...` からの自動マイグレーション付き
+- **GitHub APIリトライ機構**: `withRetry` ユーティリティによる指数バックオフ。HTTP 429 の `Retry-After` ヘッダを尊重
+- **DM対応**: `DirectMessages` intent を追加。DMではチャンネルカテゴリ判定をスキップし、コマンド応答と自動保存トリガーが動作
+- **画像対応**: 添付画像のメタデータ（URL/ファイル名/サイズ/contentType）をAIプロンプトに含め、`images` カテゴリとして保存を推奨
+
 ## セットアップ
 
 ### 1. 依存パッケージのインストール
@@ -51,12 +73,27 @@ npm start
 
 ## コマンド
 
+### テキストコマンド
+
 | コマンド | 説明 |
 |---------|------|
 | `!save` | 直前の会話をメモリとして保存 |
 | `!search <キーワード>` | メモリを検索 |
 | `!recent` | 最近のメモリを表示 |
+| `!categories` | カテゴリ別メモリ件数を表示 |
+| `!delete <検索語>` | メモリを検索して削除 |
+| `!edit <検索語>` | メモリを検索して編集 |
+| `!remind <日時> <内容>` | リマインダーを設定 |
 | `!help` | ヘルプを表示 |
+
+### スラッシュコマンド
+
+| コマンド | 説明 |
+|---------|------|
+| `/search <キーワード>` | メモリを検索（ボタンUI付き） |
+| `/delete <検索語>` | メモリを検索して削除 |
+| `/edit <検索語>` | メモリを検索して編集 |
+| `/remind <日時> <内容>` | リマインダーを設定 |
 
 ## チャンネル名によるカテゴリ自動判定
 
@@ -101,20 +138,27 @@ npm start
 
 ```
 src/
-├── index.ts        # エントリポイント
-├── config.ts       # 設定管理
-├── github/         # GitHub API連携
-│   ├── client.ts   # GitHub APIクライアント
-│   ├── memory.ts   # メモリ管理
-│   └── types.ts    # 型定義
-├── discord/        # Discord Bot
-│   ├── bot.ts      # Botメインクラス
-│   ├── commands.ts # コマンド処理
-│   └── types.ts    # 型定義
-└── ai/             # AI統合
-    ├── client.ts   # GLM-4 APIクライアント
-    ├── prompts.ts  # プロンプト定義
-    └── types.ts    # 型定義
+├── index.ts              # エントリポイント
+├── config.ts             # 設定管理
+├── github/               # GitHub API連携
+│   ├── client.ts         # GitHub APIクライアント
+│   ├── memory.ts         # メモリ管理（マルチサーバー対応）
+│   ├── index.ts          # エクスポート
+│   └── types.ts          # 型定義
+├── discord/              # Discord Bot
+│   ├── bot.ts            # Botメインクラス（DM・画像対応）
+│   ├── commands.ts       # テキストコマンド処理
+│   ├── slash-commands.ts # スラッシュコマンド処理
+│   ├── channel-category.ts # チャンネル名カテゴリ判定
+│   ├── index.ts          # エクスポート
+│   └── types.ts          # 型定義
+├── ai/                   # AI統合
+│   ├── client.ts         # GLM-4 APIクライアント（画像メタデータ対応）
+│   ├── prompts.ts        # プロンプト定義
+│   ├── index.ts          # エクスポート
+│   └── types.ts          # 型定義
+└── utils/                # ユーティリティ
+    └── retry.ts          # リトライ機構（指数バックオフ）
 ```
 
 ## 保存形式
@@ -134,7 +178,8 @@ summary: 要約
 本文（Markdown）
 ```
 
-保存先: `memory/{category}/{YYYY-MM-DD}-{uuid}.md`
+保存先: `memory/{guildId}/{category}/{YYYY-MM-DD}-{uuid}.md`
+（DMからの保存: `memory/dm/{category}/{YYYY-MM-DD}-{uuid}.md`）
 
 ### スケジュール追加フィールド（type: schedule）
 

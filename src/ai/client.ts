@@ -1,6 +1,14 @@
 import OpenAI from 'openai';
 import type { AIClientConfig, GeneratedMemory, ConversationContext, SaveDecision } from './types.js';
 import { MEMORY_GENERATION_PROMPT, SAVE_DECISION_PROMPT, formatConversationContext } from './prompts.js';
+import { withRetry } from '../utils/retry.js';
+
+export interface ImageAttachment {
+  url: string;
+  filename: string;
+  size: number;
+  contentType: string;
+}
 
 /**
  * AIクライアント
@@ -21,24 +29,35 @@ export class AIClient {
   /**
    * 会話からメモリを生成
    */
-  async generateMemory(context: ConversationContext): Promise<GeneratedMemory> {
+  async generateMemory(context: ConversationContext, imageAttachments?: ImageAttachment[]): Promise<GeneratedMemory> {
     const conversationText = formatConversationContext(context.messages);
-    const prompt = `${MEMORY_GENERATION_PROMPT}\n${conversationText}`;
+    let prompt = `${MEMORY_GENERATION_PROMPT}\n${conversationText}`;
 
-    const response = await this.client.chat.completions.create({
-      model: this.model,
-      messages: [
-        {
-          role: 'system',
-          content: 'あなたは会話からメモリを抽出するアシスタントです。必ずJSON形式のみで回答してください。',
-        },
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-      temperature: 0.3,
-    });
+    if (imageAttachments && imageAttachments.length > 0) {
+      const imageInfo = imageAttachments
+        .map((img, i) =>
+          `画像${i + 1}: ${img.filename} (${img.contentType}, ${Math.round(img.size / 1024)}KB)\nURL: ${img.url}`
+        )
+        .join('\n');
+      prompt += `\n\n## 添付画像\n${imageInfo}\n\n※画像が添付されています。カテゴリは "images" を推奨します。`;
+    }
+
+    const response = await withRetry(() =>
+      this.client.chat.completions.create({
+        model: this.model,
+        messages: [
+          {
+            role: 'system',
+            content: 'あなたは会話からメモリを抽出するアシスタントです。必ずJSON形式のみで回答してください。',
+          },
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+        temperature: 0.3,
+      }),
+    );
 
     const content = response.choices[0]?.message?.content;
     if (!content) {
@@ -68,20 +87,22 @@ export class AIClient {
     // 不明確な場合はAIで判定
     const prompt = `${SAVE_DECISION_PROMPT}\n${message}`;
 
-    const response = await this.client.chat.completions.create({
-      model: this.model,
-      messages: [
-        {
-          role: 'system',
-          content: '保存意図の判定を行います。必ずJSON形式のみで回答してください。',
-        },
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-      temperature: 0.1,
-    });
+    const response = await withRetry(() =>
+      this.client.chat.completions.create({
+        model: this.model,
+        messages: [
+          {
+            role: 'system',
+            content: '保存意図の判定を行います。必ずJSON形式のみで回答してください。',
+          },
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+        temperature: 0.1,
+      }),
+    );
 
     const content = response.choices[0]?.message?.content;
     if (!content) {
