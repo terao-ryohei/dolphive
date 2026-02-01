@@ -29,6 +29,24 @@ type DmScopesFile = {
 const generateId = (): string =>
   `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
+const locks = new Map<string, Promise<void>>();
+
+const withLock = async <T>(key: string, fn: () => Promise<T>): Promise<T> => {
+  const prev = locks.get(key) ?? Promise.resolve();
+  let resolve: () => void;
+  const next = new Promise<void>((r) => { resolve = r; });
+  locks.set(key, next);
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    resolve!();
+    if (locks.get(key) === next) {
+      locks.delete(key);
+    }
+  }
+};
+
 let discordClient: Client | null = null;
 let githubClient: GitHubClient | null = null;
 let cache = new Map<string, ReminderEntry[]>();
@@ -53,31 +71,33 @@ const loadDmScopes = async (): Promise<string[]> => {
 };
 
 const addDmScope = async (scopeId: string): Promise<void> => {
-  const client = getGithubClient();
-  const fileData = await client.getFile(DM_SCOPES_PATH);
-  let scopes: string[] = [];
-  let sha: string | undefined;
+  await withLock('dm_scopes', async () => {
+    const client = getGithubClient();
+    const fileData = await client.getFile(DM_SCOPES_PATH);
+    let scopes: string[] = [];
+    let sha: string | undefined;
 
-  if (fileData) {
-    sha = fileData.sha;
-    try {
-      const parsed = JSON.parse(fileData.content) as DmScopesFile;
-      scopes = Array.isArray(parsed.scopes) ? parsed.scopes : [];
-    } catch {
-      scopes = [];
+    if (fileData) {
+      sha = fileData.sha;
+      try {
+        const parsed = JSON.parse(fileData.content) as DmScopesFile;
+        scopes = Array.isArray(parsed.scopes) ? parsed.scopes : [];
+      } catch {
+        scopes = [];
+      }
     }
-  }
 
-  if (scopes.includes(scopeId)) return;
+    if (scopes.includes(scopeId)) return;
 
-  scopes.push(scopeId);
-  const content = JSON.stringify({ scopes } satisfies DmScopesFile, null, 2);
+    scopes.push(scopeId);
+    const content = JSON.stringify({ scopes } satisfies DmScopesFile, null, 2);
 
-  if (sha) {
-    await client.updateFile(DM_SCOPES_PATH, content, 'Update DM reminder scopes', sha);
-  } else {
-    await client.createFile(DM_SCOPES_PATH, content, 'Create DM reminder scopes');
-  }
+    if (sha) {
+      await client.updateFile(DM_SCOPES_PATH, content, 'Update DM reminder scopes', sha);
+    } else {
+      await client.createFile(DM_SCOPES_PATH, content, 'Create DM reminder scopes');
+    }
+  });
 };
 
 const loadRemindersForGuild = async (guildId: string): Promise<ReminderEntry[]> => {
@@ -133,7 +153,7 @@ export const initReminder = (client: Client, githubConfig: GitHubClientConfig): 
  */
 export const loadAllReminders = async (guildIds: string[]): Promise<void> => {
   const dmScopes = await loadDmScopes();
-  const allIds = [...new Set([...guildIds, ...dmScopes])];
+  const allIds = [...new Set([...guildIds, ...dmScopes, 'dm'])];
   await Promise.all(allIds.map((id) => loadRemindersForGuild(id)));
 };
 
