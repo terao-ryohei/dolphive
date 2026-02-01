@@ -20,6 +20,7 @@ import type { ImageAttachment } from '../ai/client.js';
 import type { GeneratedMemory } from '../ai/types.js';
 import { CommandHandler } from './commands.js';
 import { detectCategoryFromChannel } from './channel-category.js';
+import { getScopeId } from './scope.js';
 import { registerCommands, handleSearchInteraction, handleSearchButton, handleDeleteInteraction, handleEditInteraction, handleRemindInteraction } from './slash-commands.js';
 import { initReminder, loadAllReminders, startReminderChecker } from '../reminder.js';
 import type { GitHubClientConfig } from '../github/types.js';
@@ -184,7 +185,7 @@ export class MemoryBot {
         this.pendingMemories.delete(messageId);
         try {
           console.log('[KPI] save_attempt');
-          const guildId = pending.message.guild?.id ?? 'dm';
+          const guildId = getScopeId(pending.message.guild?.id, pending.message.author.id);
           const saved = await this.memoryManager.saveMemory({
             category: pending.memory.category,
             title: pending.memory.title,
@@ -200,7 +201,7 @@ export class MemoryBot {
             status: pending.memory.status as CreateMemoryInput['status'],
             dueDate: pending.memory.dueDate,
             priority: pending.memory.priority as CreateMemoryInput['priority'],
-          }, guildId);
+          }, guildId, pending.message.author.id);
           console.log('[KPI] save_success');
           await interaction.update({
             content:
@@ -452,7 +453,7 @@ export class MemoryBot {
         }));
 
       // RAG: memoryManager で関連メモリを検索（上限3件）
-      const guildId = message.guild?.id ?? 'dm';
+      const guildId = getScopeId(message.guild?.id, message.author.id);
       const searchResults = await this.memoryManager.searchMemories(message.content, guildId);
       const relatedMemories = searchResults.slice(0, 3).map((r) => ({
         title: r.frontmatter.title,

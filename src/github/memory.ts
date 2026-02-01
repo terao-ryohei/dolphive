@@ -1,5 +1,6 @@
 import { format } from 'date-fns';
 import { uuidv7 } from 'uuidv7';
+import YAML from 'yaml';
 import { GitHubClient } from './client.js';
 import type {
   MemoryCategory,
@@ -13,6 +14,24 @@ import type {
 const MEMORY_BASE_PATH = 'memory';
 const ALL_CATEGORIES: MemoryCategory[] = ['daily', 'ideas', 'research', 'images', 'logs', 'schedule', 'tasks'];
 const INDEX_VERSION = 1;
+
+const locks = new Map<string, Promise<void>>();
+
+const withLock = async <T>(key: string, fn: () => Promise<T>): Promise<T> => {
+  const prev = locks.get(key) ?? Promise.resolve();
+  let resolve: () => void;
+  const next = new Promise<void>((r) => { resolve = r; });
+  locks.set(key, next);
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    resolve!();
+    if (locks.get(key) === next) {
+      locks.delete(key);
+    }
+  }
+};
 
 type MemoryIndexEntry = {
   readonly path: string;
@@ -67,10 +86,13 @@ export class MemoryManager {
    * メモリを保存
    * 新規保存は常に memory/{guildId}/{category}/ に書き込む
    */
-  async saveMemory(input: CreateMemoryInput, guildId: string): Promise<SavedMemory> {
+  async saveMemory(input: CreateMemoryInput, guildId: string, authorId?: string): Promise<SavedMemory> {
     const date = new Date();
     const filePath = this.generateFilePath(input.category, date, guildId);
     const frontmatter = this.createFrontmatter(input, date);
+    if (authorId) {
+      frontmatter.author_id = authorId;
+    }
     const markdown = this.formatMarkdown(frontmatter, input.content);
 
     const commitMessage = `Add ${input.category}: ${input.title}`;
@@ -90,6 +112,16 @@ export class MemoryManager {
       sha: result.sha,
       frontmatter,
     };
+  }
+
+  /**
+   * メモリの frontmatter を取得
+   */
+  async getMemoryFrontmatter(memoryPath: string): Promise<MemoryFrontmatter | null> {
+    const fileData = await this.client.getFile(memoryPath);
+    if (!fileData) return null;
+    const parsed = this.parseMarkdown(fileData.content);
+    return parsed?.frontmatter ?? null;
   }
 
   /**
@@ -192,46 +224,29 @@ export class MemoryManager {
    * Markdownを整形（YAML frontmatter + 本文）
    */
   formatMarkdown(frontmatter: MemoryFrontmatter, content: string): string {
-    const yamlLines = [
-      '---',
-      `title: ${this.escapeYamlValue(frontmatter.title)}`,
-      `date: ${frontmatter.date}`,
-      `tags: [${frontmatter.tags.map((t) => this.escapeYamlValue(t)).join(', ')}]`,
-      `source: ${frontmatter.source}`,
-      `type: ${frontmatter.type}`,
-    ];
+    const obj: Record<string, unknown> = {
+      title: frontmatter.title,
+      date: frontmatter.date,
+      tags: frontmatter.tags,
+      source: frontmatter.source,
+      type: frontmatter.type,
+    };
 
-    if (frontmatter.drive_url) {
-      yamlLines.push(`drive_url: ${frontmatter.drive_url}`);
-    }
-    // Schedule fields
-    if (frontmatter.start_date) yamlLines.push(`start_date: ${frontmatter.start_date}`);
-    if (frontmatter.end_date) yamlLines.push(`end_date: ${frontmatter.end_date}`);
-    if (frontmatter.start_time) yamlLines.push(`start_time: ${frontmatter.start_time}`);
-    if (frontmatter.end_time) yamlLines.push(`end_time: ${frontmatter.end_time}`);
-    if (frontmatter.location) yamlLines.push(`location: ${this.escapeYamlValue(frontmatter.location)}`);
-    if (frontmatter.recurring) yamlLines.push(`recurring: ${frontmatter.recurring}`);
-    // Task fields
-    if (frontmatter.status) yamlLines.push(`status: ${frontmatter.status}`);
-    if (frontmatter.due_date) yamlLines.push(`due_date: ${frontmatter.due_date}`);
-    if (frontmatter.priority) yamlLines.push(`priority: ${frontmatter.priority}`);
+    if (frontmatter.author_id) obj.author_id = frontmatter.author_id;
+    if (frontmatter.drive_url) obj.drive_url = frontmatter.drive_url;
+    if (frontmatter.start_date) obj.start_date = frontmatter.start_date;
+    if (frontmatter.end_date) obj.end_date = frontmatter.end_date;
+    if (frontmatter.start_time) obj.start_time = frontmatter.start_time;
+    if (frontmatter.end_time) obj.end_time = frontmatter.end_time;
+    if (frontmatter.location) obj.location = frontmatter.location;
+    if (frontmatter.recurring) obj.recurring = frontmatter.recurring;
+    if (frontmatter.status) obj.status = frontmatter.status;
+    if (frontmatter.due_date) obj.due_date = frontmatter.due_date;
+    if (frontmatter.priority) obj.priority = frontmatter.priority;
+    obj.summary = frontmatter.summary;
 
-    yamlLines.push(`summary: ${this.escapeYamlValue(frontmatter.summary)}`);
-    yamlLines.push('---');
-    yamlLines.push('');
-    yamlLines.push(content);
-
-    return yamlLines.join('\n');
-  }
-
-  /**
-   * YAML値をエスケープ
-   */
-  private escapeYamlValue(value: string): string {
-    if (value.includes(':') || value.includes('#') || value.includes('"') || value.includes("'")) {
-      return `"${value.replace(/"/g, '\\"')}"`;
-    }
-    return value;
+    const yamlStr = YAML.stringify(obj, { lineWidth: 0 }).trimEnd();
+    return `---\n${yamlStr}\n---\n\n${content}`;
   }
 
   // ─── インデックス管理 ───
@@ -305,15 +320,19 @@ export class MemoryManager {
   }
 
   private async addToIndex(guildId: string, entry: MemoryIndexEntry): Promise<void> {
-    const { index, sha } = await this.getIndex(guildId);
-    index.entries.push(entry);
-    await this.saveIndex(guildId, index, sha);
+    await withLock(`index:${guildId}`, async () => {
+      const { index, sha } = await this.getIndex(guildId);
+      index.entries.push(entry);
+      await this.saveIndex(guildId, index, sha);
+    });
   }
 
   private async removeFromIndex(guildId: string, path: string): Promise<void> {
-    const { index, sha } = await this.getIndex(guildId);
-    const newEntries = index.entries.filter((e) => e.path !== path);
-    await this.saveIndex(guildId, { ...index, entries: newEntries }, sha);
+    await withLock(`index:${guildId}`, async () => {
+      const { index, sha } = await this.getIndex(guildId);
+      const newEntries = index.entries.filter((e) => e.path !== path);
+      await this.saveIndex(guildId, { ...index, entries: newEntries }, sha);
+    });
   }
 
   private async updateIndexEntry(
@@ -321,17 +340,19 @@ export class MemoryManager {
     path: string,
     updates: { title?: string; tags?: readonly string[]; summary?: string },
   ): Promise<void> {
-    const { index, sha } = await this.getIndex(guildId);
-    const newEntries = index.entries.map((e) => {
-      if (e.path !== path) return e;
-      return {
-        ...e,
-        ...(updates.title !== undefined && { title: updates.title }),
-        ...(updates.tags !== undefined && { tags: updates.tags }),
-        ...(updates.summary !== undefined && { summary: updates.summary }),
-      };
+    await withLock(`index:${guildId}`, async () => {
+      const { index, sha } = await this.getIndex(guildId);
+      const newEntries = index.entries.map((e) => {
+        if (e.path !== path) return e;
+        return {
+          ...e,
+          ...(updates.title !== undefined && { title: updates.title }),
+          ...(updates.tags !== undefined && { tags: updates.tags }),
+          ...(updates.summary !== undefined && { summary: updates.summary }),
+        };
+      });
+      await this.saveIndex(guildId, { ...index, entries: newEntries }, sha);
     });
-    await this.saveIndex(guildId, { ...index, entries: newEntries }, sha);
   }
 
   // ─── 検索・一覧 ───
@@ -523,43 +544,11 @@ export class MemoryManager {
     }
   }
 
-  /**
-   * 簡易YAMLパーサー
-   */
-  private parseYaml(yaml: string): MemoryFrontmatter {
-    const lines = yaml.split('\n');
-    const result: Record<string, unknown> = {};
-
-    for (const line of lines) {
-      const colonIndex = line.indexOf(':');
-      if (colonIndex === -1) continue;
-
-      const key = line.slice(0, colonIndex).trim();
-      let value = line.slice(colonIndex + 1).trim();
-
-      // 配列の場合
-      if (value.startsWith('[') && value.endsWith(']')) {
-        const arrayContent = value.slice(1, -1);
-        result[key] = arrayContent
-          .split(',')
-          .map((v) => this.unescapeYamlValue(v.trim()))
-          .filter((v) => v.length > 0);
-      } else {
-        result[key] = this.unescapeYamlValue(value);
-      }
+  private parseYaml(yamlStr: string): MemoryFrontmatter {
+    const parsed = YAML.parse(yamlStr) as Record<string, unknown>;
+    if (parsed.tags && !Array.isArray(parsed.tags)) {
+      parsed.tags = [String(parsed.tags)];
     }
-
-    return result as unknown as MemoryFrontmatter;
-  }
-
-  /**
-   * YAMLエスケープを解除
-   */
-  private unescapeYamlValue(value: string): string {
-    if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) {
-      return value.slice(1, -1).replace(/\\"/g, '"');
-    }
-    return value;
+    return parsed as unknown as MemoryFrontmatter;
   }
 }

@@ -26,7 +26,8 @@
     "discord.js": "^15.0.0-dev.1769601701-c71228aab",
     "dotenv": "^16.4.0",
     "openai": "^4.52.0",
-    "uuidv7": "^1.0.1"
+    "uuidv7": "^1.0.1",
+    "yaml": "^2.8.2"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

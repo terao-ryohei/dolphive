@@ -9,6 +9,7 @@ import {
   ButtonInteraction,
   ComponentType,
   MessageFlags,
+  PermissionFlagsBits,
   Client,
   TextChannel,
 } from 'discord.js';
@@ -16,6 +17,7 @@ import type { MemoryManager } from '../github/index.js';
 import type { MemoryCategory, SearchResult } from '../github/types.js';
 import { detectCategoryFromChannel } from './channel-category.js';
 import { setReminder } from '../reminder.js';
+import { getScopeId } from './scope.js';
 
 export const ALL_CATEGORIES: MemoryCategory[] = [
   'daily',
@@ -109,7 +111,7 @@ export async function handleSearchInteraction(
   }
 
   const categories = category ? [category] : undefined;
-  const guildId = interaction.guildId ?? 'dm';
+  const guildId = getScopeId(interaction.guildId, interaction.user.id);
   const results = await memoryManager.searchMemories(query, guildId, categories);
 
   console.log('[KPI] search_slash');
@@ -156,7 +158,7 @@ export async function handleSearchButton(
     categoryRaw === 'all' ? undefined : (categoryRaw as MemoryCategory);
   const categories = category ? [category] : undefined;
 
-  const guildId = interaction.guildId ?? 'dm';
+  const guildId = getScopeId(interaction.guildId, interaction.user.id);
   const results = await memoryManager.searchMemories(query, guildId, categories);
   const page = results.slice(offset, offset + 5);
 
@@ -202,7 +204,7 @@ export async function handleDeleteInteraction(
   await interaction.deferReply();
 
   const keyword = interaction.options.getString('keyword', true);
-  const guildId = interaction.guildId ?? 'dm';
+  const guildId = getScopeId(interaction.guildId, interaction.user.id);
   const results = await memoryManager.searchMemories(keyword, guildId);
 
   if (results.length === 0) {
@@ -221,6 +223,20 @@ export async function handleDeleteInteraction(
   }
 
   const target = results[0];
+  const authorId = target.frontmatter.author_id;
+  const isAuthor = authorId === interaction.user.id;
+  const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) ?? false;
+  const isDm = !interaction.guildId;
+
+  if (authorId && !isAuthor && !isAdmin) {
+    await interaction.editReply('このメモリを削除する権限がありません。作成者本人または管理者のみ削除できます。');
+    return;
+  }
+  if (!authorId && !isAdmin && !isDm) {
+    await interaction.editReply('author_id未設定の既存メモリは管理者のみ削除できます。');
+    return;
+  }
+
   const embed = formatSearchResultEmbed(target)
     .setFooter({ text: `パス: ${target.path}` });
 
@@ -271,7 +287,7 @@ export async function handleEditInteraction(
   const keyword = interaction.options.getString('keyword', true);
   const field = interaction.options.getString('field', true) as 'title' | 'summary' | 'tags';
   const value = interaction.options.getString('value', true);
-  const guildId = interaction.guildId ?? 'dm';
+  const guildId = getScopeId(interaction.guildId, interaction.user.id);
   const results = await memoryManager.searchMemories(keyword, guildId);
 
   if (results.length === 0) {
@@ -290,6 +306,20 @@ export async function handleEditInteraction(
   }
 
   const target = results[0];
+  const editAuthorId = target.frontmatter.author_id;
+  const isEditAuthor = editAuthorId === interaction.user.id;
+  const isEditAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) ?? false;
+  const isEditDm = !interaction.guildId;
+
+  if (editAuthorId && !isEditAuthor && !isEditAdmin) {
+    await interaction.editReply('このメモリを編集する権限がありません。作成者本人または管理者のみ編集できます。');
+    return;
+  }
+  if (!editAuthorId && !isEditAdmin && !isEditDm) {
+    await interaction.editReply('author_id未設定の既存メモリは管理者のみ編集できます。');
+    return;
+  }
+
   const updates = field === 'tags'
     ? { tags: value.split(',').map((t) => t.trim()).filter((t) => t.length > 0) }
     : { [field]: value };
@@ -310,7 +340,7 @@ export async function handleRemindInteraction(
 
   const message = interaction.options.getString('message', true);
   const minutes = interaction.options.getInteger('minutes', true);
-  const guildId = interaction.guildId ?? 'dm';
+  const guildId = getScopeId(interaction.guildId, interaction.user.id);
 
   const triggerTime = new Date(Date.now() + minutes * 60_000);
 

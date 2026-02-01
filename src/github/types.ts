@@ -20,6 +20,7 @@ export interface MemoryFrontmatter {
   source: 'discord';
   type: MemoryCategory;
   summary: string;
+  author_id?: string;
   drive_url?: string;
   // Schedule fields
   start_date?: string;

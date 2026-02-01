@@ -1,8 +1,9 @@
-import { EmbedBuilder, type Message } from 'discord.js';
+import { EmbedBuilder, PermissionFlagsBits, type Message } from 'discord.js';
 import type { MemoryManager, SearchResult } from '../github/index.js';
 import type { AIClient } from '../ai/index.js';
 import type { MemoryCategory } from '../github/types.js';
 import { setReminder } from '../reminder.js';
+import { getScopeId } from './scope.js';
 
 const VALID_CATEGORIES: MemoryCategory[] = ['daily', 'ideas', 'research', 'images', 'logs', 'schedule', 'tasks'];
 
@@ -84,7 +85,7 @@ export class CommandHandler {
     await message.reply(`「${query}」で検索中...`);
 
     try {
-      const guildId = message.guild?.id ?? 'dm';
+      const guildId = getScopeId(message.guild?.id, message.author.id);
       const results = await this.memoryManager.searchMemories(query, guildId);
 
       if (results.length === 0) {
@@ -105,7 +106,7 @@ export class CommandHandler {
    */
   private async handleRecent(message: Message): Promise<void> {
     try {
-      const guildId = message.guild?.id ?? 'dm';
+      const guildId = getScopeId(message.guild?.id, message.author.id);
       const results = await this.memoryManager.getRecentMemories(guildId, 5);
 
       if (results.length === 0) {
@@ -136,7 +137,7 @@ export class CommandHandler {
     };
 
     try {
-      const guildId = message.guild?.id ?? 'dm';
+      const guildId = getScopeId(message.guild?.id, message.author.id);
 
       const memoriesByCategory = await Promise.all(
         VALID_CATEGORIES.map(async (category) => ({
@@ -186,7 +187,7 @@ export class CommandHandler {
     }
 
     try {
-      const guildId = message.guild?.id ?? 'dm';
+      const guildId = getScopeId(message.guild?.id, message.author.id);
       const results = await this.memoryManager.searchMemories(query, guildId);
 
       if (results.length === 0) {
@@ -203,6 +204,20 @@ export class CommandHandler {
       }
 
       const target = results[0];
+      const authorId = target.frontmatter.author_id;
+      const isAuthor = authorId === message.author.id;
+      const isAdmin = message.member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
+      const isDm = !message.guild;
+
+      if (authorId && !isAuthor && !isAdmin) {
+        await message.reply('このメモリを削除する権限がありません。作成者本人または管理者のみ削除できます。');
+        return;
+      }
+      if (!authorId && !isAdmin && !isDm) {
+        await message.reply('author_id未設定の既存メモリは管理者のみ削除できます。');
+        return;
+      }
+
       await this.memoryManager.deleteMemory(guildId, target.path);
       await message.reply(`削除しました: **${target.frontmatter.title}** (${target.frontmatter.date})`);
     } catch (error) {
@@ -254,7 +269,7 @@ export class CommandHandler {
     }
 
     try {
-      const guildId = message.guild?.id ?? 'dm';
+      const guildId = getScopeId(message.guild?.id, message.author.id);
       const results = await this.memoryManager.searchMemories(query, guildId);
 
       if (results.length === 0) {
@@ -271,6 +286,20 @@ export class CommandHandler {
       }
 
       const target = results[0];
+      const authorId = target.frontmatter.author_id;
+      const isAuthor = authorId === message.author.id;
+      const isAdmin = message.member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
+      const isDm = !message.guild;
+
+      if (authorId && !isAuthor && !isAdmin) {
+        await message.reply('このメモリを編集する権限がありません。作成者本人または管理者のみ編集できます。');
+        return;
+      }
+      if (!authorId && !isAdmin && !isDm) {
+        await message.reply('author_id未設定の既存メモリは管理者のみ編集できます。');
+        return;
+      }
+
       const updates = field === 'tags'
         ? { tags: value.split(',').map((t) => t.trim()).filter((t) => t.length > 0) }
         : { [field]: value };
@@ -312,7 +341,7 @@ export class CommandHandler {
     }
 
     try {
-      const guildId = message.guild?.id ?? 'dm';
+      const guildId = getScopeId(message.guild?.id, message.author.id);
       const triggerTime = new Date(Date.now() + minutes * 60_000);
 
       await setReminder({
