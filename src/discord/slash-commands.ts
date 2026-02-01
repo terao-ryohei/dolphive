@@ -381,14 +381,14 @@ export async function handleSaveInteraction(
 
   const messages = await (channel as TextChannel).messages.fetch({ limit: 20 });
   const context = Array.from(messages.values())
-    .filter((m) => m.content && !m.author.bot)
+    .filter((m) => m.content)
     .reverse()
     .map((m) => ({
       authorId: m.author.id,
       authorName: m.author.username,
       content: m.content,
       timestamp: m.createdAt,
-      isBot: false,
+      isBot: m.author.bot,
     }));
 
   if (context.length === 0) {
@@ -411,7 +411,7 @@ export async function handleSaveInteraction(
   const memory = await aiClient.generateMemory({
     username: interaction.user.username,
     messages: context.map((c) => ({
-      role: 'user' as const,
+      role: c.isBot ? 'bot' as const : 'user' as const,
       content: c.content,
       timestamp: c.timestamp,
     } as ConversationMessage)),
@@ -421,33 +421,74 @@ export async function handleSaveInteraction(
     memory.category = categoryOverride;
   }
 
-  const guildId = getScopeId(interaction.guildId, interaction.user.id);
-  await memoryManager.saveMemory({
-    category: memory.category,
-    title: memory.title,
-    tags: memory.tags,
-    summary: memory.summary,
-    content: memory.content,
-    startDate: memory.startDate,
-    endDate: memory.endDate,
-    startTime: memory.startTime,
-    endTime: memory.endTime,
-    location: memory.location,
-    recurring: memory.recurring as CreateMemoryInput['recurring'],
-    status: memory.status as CreateMemoryInput['status'],
-    dueDate: memory.dueDate,
-    priority: memory.priority as CreateMemoryInput['priority'],
-  }, guildId, interaction.user.id);
+  const embed = new EmbedBuilder()
+    .setTitle(memory.title)
+    .addFields(
+      { name: 'カテゴリ', value: memory.category, inline: true },
+      { name: 'タグ', value: memory.tags.join(', ') || 'なし', inline: true },
+    )
+    .setDescription(memory.summary)
+    .setColor(0x00bfff);
 
-  console.log('[KPI] save_success');
-
-  await interaction.editReply(
-    `📁 **${memory.category}** として保存しました\n` +
-    `**${memory.title}** | ${memory.tags.join(', ')}\n\n` +
-    `🔍 検索: \`/search キーワード\`\n` +
-    `📋 最近のメモ: \`/recent\`\n` +
-    `📁 カテゴリ一覧: \`/categories\``
+  const row = new ActionRowBuilder().addComponents(
+    new SuccessButtonBuilder().setCustomId('save_slash_confirm').setLabel('💾 保存'),
+    new DangerButtonBuilder().setCustomId('save_slash_cancel').setLabel('❌ キャンセル'),
   );
+
+  const reply = await interaction.editReply({ embeds: [embed], components: [row] });
+
+  try {
+    const btnInteraction = await reply.awaitMessageComponent({
+      componentType: ComponentType.Button,
+      time: 30_000,
+      filter: (i) => i.user.id === interaction.user.id,
+    });
+
+    if (btnInteraction.customId === 'save_slash_confirm') {
+      const guildId = getScopeId(interaction.guildId, interaction.user.id);
+      await memoryManager.saveMemory({
+        category: memory.category,
+        title: memory.title,
+        tags: memory.tags,
+        summary: memory.summary,
+        content: memory.content,
+        startDate: memory.startDate,
+        endDate: memory.endDate,
+        startTime: memory.startTime,
+        endTime: memory.endTime,
+        location: memory.location,
+        recurring: memory.recurring as CreateMemoryInput['recurring'],
+        status: memory.status as CreateMemoryInput['status'],
+        dueDate: memory.dueDate,
+        priority: memory.priority as CreateMemoryInput['priority'],
+      }, guildId, interaction.user.id);
+
+      console.log('[KPI] save_success');
+
+      await btnInteraction.update({
+        content:
+          `📁 **${memory.category}** として保存しました\n` +
+          `**${memory.title}** | ${memory.tags.join(', ')}\n\n` +
+          `🔍 検索: \`/search キーワード\`\n` +
+          `📋 最近のメモ: \`/recent\`\n` +
+          `📁 カテゴリ一覧: \`/categories\``,
+        embeds: [],
+        components: [],
+      });
+    } else {
+      await btnInteraction.update({
+        content: '保存をキャンセルしました。',
+        embeds: [],
+        components: [],
+      });
+    }
+  } catch {
+    await interaction.editReply({
+      content: '保存をキャンセルしました（タイムアウト）。',
+      embeds: [],
+      components: [],
+    });
+  }
 }
 
 export async function handleRecentInteraction(
