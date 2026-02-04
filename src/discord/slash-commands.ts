@@ -113,22 +113,42 @@ export const initCommandData = new ChatInputCommandBuilder()
   .setDescription('Dolphive用チャンネル一式を自動作成')
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels);
 
+// ギルド登録（即時反映）を採用。グローバル登録は反映に最大1時間かかるため不採用。
 export async function registerCommands(client: Client): Promise<void> {
-  client.guilds.cache.forEach(async (guild) => {
-    try {
-      await guild.commands.set([
-        commandData, deleteCommandData, editCommandData, remindCommandData,
-        saveCommandData, recentCommandData, categoriesCommandData, helpCommandData,
-        initCommandData,
-      ]);
-      console.log(`Registered slash commands for guild: ${guild.name}`);
-    } catch (error) {
-      console.error(
-        `Failed to register commands for guild ${guild.name}:`,
-        error
-      );
+  let guilds = Array.from(client.guilds.cache.values());
+  console.log(`registerCommands: ${guilds.length} guild(s) in cache`);
+
+  if (guilds.length === 0) {
+    console.warn('registerCommands: guilds.cache is empty, fetching from API...');
+    const fetched = await client.guilds.fetch();
+    const fullGuilds = await Promise.all(
+      fetched.map((oauth2Guild) => client.guilds.fetch(oauth2Guild.id)),
+    );
+    guilds = fullGuilds;
+    console.log(`registerCommands: fetched ${guilds.length} guild(s) from API`);
+    if (guilds.length === 0) {
+      console.error('registerCommands: No guilds found even after fetch. Check bot invite and Guilds intent.');
+      return;
     }
-  });
+  }
+
+  const allCommands = [
+    commandData, deleteCommandData, editCommandData, remindCommandData,
+    saveCommandData, recentCommandData, categoriesCommandData, helpCommandData,
+    initCommandData,
+  ];
+
+  for (const guild of guilds) {
+    try {
+      const registered = await guild.commands.set(allCommands);
+      console.log(`Registered ${registered.size} slash commands for guild: ${guild.name} (${guild.id})`);
+    } catch (error) {
+      const detail = error instanceof Error
+        ? { message: error.message, ...(('status' in error) && { status: (error as { status: unknown }).status }), ...(('code' in error) && { code: (error as { code: unknown }).code }) }
+        : error;
+      console.error(`Failed to register commands for guild ${guild.name} (${guild.id}):`, JSON.stringify(detail, null, 2));
+    }
+  }
 }
 
 export async function handleSearchInteraction(
