@@ -72,7 +72,7 @@ export class MemoryBot {
    * イベントハンドラを設定
    */
   private setupEventHandlers(): void {
-    this.client.on('ready', async () => {
+    this.client.on('clientReady', async () => {
       console.log(`Logged in as ${this.client.user?.tag}`);
       this.state.isRunning = true;
       try {
