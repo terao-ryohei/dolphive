@@ -465,7 +465,10 @@ export class MemoryBot {
 
       // RAG: memoryManager で関連メモリを検索（上限3件）
       const guildId = getScopeId(message.guild?.id, message.author.id);
+      this.memoryManager.resetApiCallCount();
       const searchResults = await this.memoryManager.searchMemories(message.content, guildId);
+      const apiCalls = this.memoryManager.getApiCallCount();
+      console.log(`[Performance] GitHub API calls during search: ${apiCalls}`);
       const relatedMemories = searchResults.slice(0, 3).map((r) => ({
         title: r.frontmatter.title,
         summary: r.frontmatter.summary,

@@ -67,15 +67,35 @@ const createEmptyIndex = (): MemoryIndex => ({
   entries: [],
 });
 
+type IndexCacheEntry = {
+  index: MemoryIndex;
+  sha: string | null;
+  cacheTime: number;
+};
+
 /**
  * メモリマネージャ
  * AIの出力をMarkdownに変換してGitHubにコミット
  */
 export class MemoryManager {
   private client: GitHubClient;
+  private indexCache = new Map<string, IndexCacheEntry>();
+  private readonly CACHE_TTL_MS = 60_000; // 60 seconds
 
   constructor(config: GitHubClientConfig) {
     this.client = new GitHubClient(config);
+  }
+
+  private clearIndexCache(guildId: string): void {
+    this.indexCache.delete(guildId);
+  }
+
+  getApiCallCount(): number {
+    return this.client.getApiCallCount();
+  }
+
+  resetApiCallCount(): void {
+    this.client.resetApiCallCount();
   }
 
   async ensureRepo(): Promise<void> {
@@ -107,6 +127,8 @@ export class MemoryManager {
       summary: input.summary,
     });
 
+    this.clearIndexCache(guildId);
+
     return {
       path: result.path,
       sha: result.sha,
@@ -135,6 +157,7 @@ export class MemoryManager {
 
     await this.client.deleteFile(memoryPath, `Delete memory: ${memoryPath}`, fileData.sha);
     await this.removeFromIndex(guildId, memoryPath);
+    this.clearIndexCache(guildId);
   }
 
   /**
@@ -172,6 +195,8 @@ export class MemoryManager {
       tags: newFrontmatter.tags,
       summary: newFrontmatter.summary,
     });
+
+    this.clearIndexCache(guildId);
 
     return { path: memoryPath, frontmatter: newFrontmatter, content: newContent };
   }
@@ -252,6 +277,12 @@ export class MemoryManager {
   // ─── インデックス管理 ───
 
   private async getIndex(guildId: string): Promise<{ index: MemoryIndex; sha: string | null }> {
+    // Check cache first
+    const cached = this.indexCache.get(guildId);
+    if (cached && Date.now() - cached.cacheTime < this.CACHE_TTL_MS) {
+      return { index: cached.index, sha: cached.sha };
+    }
+
     const indexPath = getIndexPath(guildId);
     const fileData = await this.client.getFile(indexPath);
 
@@ -259,6 +290,7 @@ export class MemoryManager {
       try {
         const index = JSON.parse(fileData.content) as MemoryIndex;
         if (index.version === INDEX_VERSION && Array.isArray(index.entries)) {
+          this.indexCache.set(guildId, { index, sha: fileData.sha, cacheTime: Date.now() });
           return { index, sha: fileData.sha };
         }
       } catch {
@@ -266,8 +298,29 @@ export class MemoryManager {
       }
     }
 
+    // Check if memory directory exists (early return for empty repos)
+    const memoryBasePath = getMemoryBasePath(guildId);
+    const dirExists = await this.checkDirectoryExists(memoryBasePath);
+
+    if (!dirExists) {
+      const emptyIndex = createEmptyIndex();
+      this.indexCache.set(guildId, { index: emptyIndex, sha: null, cacheTime: Date.now() });
+      console.log(`[Performance] Empty repository detected for guild ${guildId}. Skipping rebuild.`);
+      return { index: emptyIndex, sha: null };
+    }
+
     const rebuilt = await this.rebuildIndex(guildId);
+    this.indexCache.set(guildId, { index: rebuilt.index, sha: rebuilt.sha, cacheTime: Date.now() });
     return rebuilt;
+  }
+
+  private async checkDirectoryExists(dirPath: string): Promise<boolean> {
+    try {
+      const files = await this.client.listFiles(dirPath);
+      return files.length > 0;
+    } catch {
+      return false;
+    }
   }
 
   private async rebuildIndex(guildId: string): Promise<{ index: MemoryIndex; sha: string | null }> {

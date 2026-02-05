@@ -13,6 +13,7 @@ export class GitHubClient {
   private templateOwner: string | undefined;
   private templateRepo: string | undefined;
   private repoPrivate: boolean;
+  private apiCallCount: number = 0;
 
   constructor(config: GitHubClientConfig) {
     this.octokit = new Octokit({ auth: config.token });
@@ -21,6 +22,14 @@ export class GitHubClient {
     this.templateOwner = config.templateOwner;
     this.templateRepo = config.templateRepo;
     this.repoPrivate = config.repoPrivate ?? true;
+  }
+
+  getApiCallCount(): number {
+    return this.apiCallCount;
+  }
+
+  resetApiCallCount(): void {
+    this.apiCallCount = 0;
   }
 
   async repoExists(): Promise<boolean> {
@@ -152,6 +161,7 @@ export class GitHubClient {
    * ファイル内容を取得
    */
   async getFile(path: string): Promise<{ content: string; sha: string } | null> {
+    this.apiCallCount++;
     try {
       const response = await withRetry(() =>
         this.octokit.repos.getContent({
@@ -180,6 +190,7 @@ export class GitHubClient {
    * ディレクトリ内のファイル一覧を取得
    */
   async listFiles(dirPath: string): Promise<FileInfo[]> {
+    this.apiCallCount++;
     try {
       const response = await withRetry(() =>
         this.octokit.repos.getContent({
