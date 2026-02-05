@@ -26,6 +26,32 @@ import type { GitHubClientConfig } from '../github/types.js';
 import type { BotConfig, BotState, MessageContext } from './types.js';
 
 /**
+ * Memory search trigger words
+ * Only these words will trigger memory search in chat responses
+ */
+const MEMORY_TRIGGER_WORDS = [
+  // High confidence triggers (standalone)
+  '検索して', '探して', '調べて', '思い出して', '覚えてる', '覚えている',
+  'search', 'remember', 'recall', 'look up',
+  // Pattern triggers (phrase-based)
+  '前に言った', '前に書いた', '前に話した', '前に送った', '前に作った',
+  'メモした', '保存した', '記録した',
+  '記録を', 'メモを', '履歴を', 'ログを',
+  '過去ログ', '以前の',
+  'search for', 'find me', 'look for',
+];
+
+/**
+ * Check if message contains memory search trigger word
+ */
+function shouldSearchMemory(message: string): boolean {
+  const lowerMessage = message.toLowerCase();
+  return MEMORY_TRIGGER_WORDS.some((trigger) =>
+    lowerMessage.includes(trigger.toLowerCase())
+  );
+}
+
+/**
  * Discord Memory Bot
  */
 export class MemoryBot {
@@ -464,16 +490,24 @@ export class MemoryBot {
         }));
 
       // RAG: memoryManager で関連メモリを検索（上限3件）
+      // Check if message contains trigger word
       const guildId = getScopeId(message.guild?.id, message.author.id);
-      this.memoryManager.resetApiCallCount();
-      const searchResults = await this.memoryManager.searchMemories(message.content, guildId);
-      const apiCalls = this.memoryManager.getApiCallCount();
-      console.log(`[Performance] GitHub API calls during search: ${apiCalls}`);
-      const relatedMemories = searchResults.slice(0, 3).map((r) => ({
-        title: r.frontmatter.title,
-        summary: r.frontmatter.summary,
-        category: r.frontmatter.type,
-      }));
+      let relatedMemories: { title: string; summary: string; category: string }[] = [];
+
+      if (shouldSearchMemory(message.content)) {
+        console.log(`[Memory] Trigger word detected → searching memory`);
+        this.memoryManager.resetApiCallCount();
+        const searchResults = await this.memoryManager.searchMemories(message.content, guildId);
+        const apiCalls = this.memoryManager.getApiCallCount();
+        console.log(`[Performance] GitHub API calls during search: ${apiCalls}`);
+        relatedMemories = searchResults.slice(0, 3).map((r) => ({
+          title: r.frontmatter.title,
+          summary: r.frontmatter.summary,
+          category: r.frontmatter.type,
+        }));
+      } else {
+        console.log(`[Memory] No trigger word found → skipping memory search`);
+      }
 
       // AI応答生成
       const response = await this.aiClient.generateChatResponse(
