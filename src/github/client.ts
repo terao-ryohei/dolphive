@@ -13,6 +13,9 @@ export class GitHubClient {
   private templateOwner: string | undefined;
   private templateRepo: string | undefined;
   private repoPrivate: boolean;
+
+  // API call counter for performance monitoring
+  // Tracks all content API calls (read and write operations)
   private apiCallCount: number = 0;
 
   constructor(config: GitHubClientConfig) {
@@ -113,6 +116,7 @@ export class GitHubClient {
     content: string,
     message: string
   ): Promise<CreateFileResult> {
+    this.apiCallCount++;
     // 既存ファイルチェック
     const exists = await this.fileExists(path);
     if (exists) {
@@ -223,6 +227,41 @@ export class GitHubClient {
   }
 
   /**
+   * ディレクトリ内のコンテンツ一覧を取得（ファイル・ディレクトリ両方）
+   */
+  async listContents(dirPath: string): Promise<FileInfo[]> {
+    this.apiCallCount++;
+    try {
+      const response = await withRetry(() =>
+        this.octokit.repos.getContent({
+          owner: this.owner,
+          repo: this.repo,
+          path: dirPath,
+        }),
+      );
+
+      const data = response.data;
+      if (!Array.isArray(data)) {
+        return [];
+      }
+
+      // Include both files and directories
+      return data.map((item) => ({
+        name: item.name,
+        path: item.path,
+        sha: item.sha,
+        size: item.size ?? 0,
+        downloadUrl: item.download_url ?? null,
+      }));
+    } catch (error) {
+      if (error instanceof Error && 'status' in error && error.status === 404) {
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  /**
    * 複数ディレクトリからファイル一覧を取得
    */
   async listFilesRecursive(dirPaths: string[]): Promise<FileInfo[]> {
@@ -239,6 +278,7 @@ export class GitHubClient {
     message: string,
     sha: string,
   ): Promise<CreateFileResult> {
+    this.apiCallCount++;
     const response = await withRetry(() =>
       this.octokit.repos.createOrUpdateFileContents({
         owner: this.owner,
@@ -261,6 +301,7 @@ export class GitHubClient {
    * ファイルを削除してコミット
    */
   async deleteFile(path: string, message: string, sha: string): Promise<void> {
+    this.apiCallCount++;
     await withRetry(() =>
       this.octokit.repos.deleteFile({
         owner: this.owner,

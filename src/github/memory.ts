@@ -316,10 +316,16 @@ export class MemoryManager {
 
   private async checkDirectoryExists(dirPath: string): Promise<boolean> {
     try {
-      const files = await this.client.listFiles(dirPath);
-      return files.length > 0;
-    } catch {
-      return false;
+      // Check for any content (files or directories) in the path
+      const contents = await this.client.listContents(dirPath);
+      return contents.length > 0;
+    } catch (error) {
+      // Only treat 404 as "directory does not exist"
+      // Other errors (auth, network, etc.) should be thrown
+      if (error instanceof Error && 'status' in error && (error as { status: number }).status === 404) {
+        return false;
+      }
+      throw error;
     }
   }
 
