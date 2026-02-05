@@ -640,13 +640,13 @@ export async function handleRemindInteraction(
 }
 
 const INIT_CHANNELS = [
-  { name: '雑談', topic: 'Dolphiveが会話に参加する対話チャンネル' },
-  { name: 'daily', topic: '日記の自動保存チャンネル' },
-  { name: 'ideas', topic: 'アイデアの自動保存チャンネル' },
-  { name: 'tasks', topic: 'タスクの自動保存チャンネル' },
-  { name: 'schedule', topic: '予定の自動保存チャンネル' },
-  { name: 'research', topic: '調査メモの自動保存チャンネル' },
-  { name: 'logs', topic: '作業ログの自動保存チャンネル' },
+  { name: 'general-雑談', topic: 'Dolphiveが会話に参加する対話チャンネル' },
+  { name: 'daily-日記', topic: '日記の自動保存チャンネル' },
+  { name: 'ideas-アイデア', topic: 'アイデアの自動保存チャンネル' },
+  { name: 'tasks-タスク', topic: 'タスクの自動保存チャンネル' },
+  { name: 'schedule-予定', topic: '予定の自動保存チャンネル' },
+  { name: 'research-調査', topic: '調査メモの自動保存チャンネル' },
+  { name: 'logs-作業ログ', topic: '作業ログの自動保存チャンネル' },
 ] as const;
 
 export async function handleInitInteraction(
@@ -691,12 +691,19 @@ export async function handleInitInteraction(
     }
 
     try {
-      await guild.channels.create({
+      const channel = await guild.channels.create({
         name: ch.name,
         type: ChannelType.GuildText,
         parent: category.id,
         topic: ch.topic,
       });
+
+      // Bot用の権限を明示的に付与
+      await channel.permissionOverwrites.create(botMember, {
+        SendMessages: true,
+        EmbedLinks: true,
+      });
+
       results.push({ name: ch.name, status: '✅ 作成' });
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -717,8 +724,8 @@ export async function handleInitInteraction(
       `**${CATEGORY_NAME}** カテゴリにチャンネルを作成しました。\n\n` +
       resultLines + '\n\n' +
       '**使い方**\n' +
-      '- #雑談 → Dolphiveが会話に参加します\n' +
-      '- #daily, #ideas 等 → 発言が自動的にメモとして保存されます\n' +
+      '- #general-雑談 → Dolphiveが会話に参加します\n' +
+      '- #daily-日記, #ideas-アイデア 等 → 発言が自動的にメモとして保存されます\n' +
       '- `/help` で全コマンドを確認できます'
     )
     .setTimestamp();

@@ -119,7 +119,7 @@ export class MemoryBot {
           .setTitle('🐬 Dolphive へようこそ！')
           .setDescription(
             '🔍 `/search キーワード` で過去のメモを検索\n' +
-            '📝 カテゴリ名チャンネル（#daily, #ideas 等）での発言は自動保存\n' +
+            '📝 カテゴリ名チャンネル（#daily-日記, #ideas-アイデア 等）での発言は自動保存\n' +
             '💾 `/save` で会話を手動保存'
           )
           .setFooter({ text: '詳しくは /help で確認できます' })
@@ -395,7 +395,20 @@ export class MemoryBot {
   private formatUserFacingError(error: unknown): string {
     if (error instanceof Error && 'status' in error) {
       const status = (error as { status: number }).status;
-      if (status === 403) return 'Botに必要な権限を付与してください: メッセージ送信、埋め込みリンク';
+      const errorMessage = error.message.toLowerCase();
+
+      // GitHub API 403エラーの判定（エラーメッセージにgithub/repository/tokenが含まれる）
+      const isGitHubError = errorMessage.includes('github')
+        || errorMessage.includes('repository')
+        || errorMessage.includes('token')
+        || errorMessage.includes('permission denied');
+
+      if (status === 403) {
+        if (isGitHubError) {
+          return 'GITHUB_TOKENの権限を確認してください（リポジトリへの書き込み権限が必要です）';
+        }
+        return 'Botに必要な権限を付与してください: メッセージ送信、埋め込みリンク';
+      }
       if (status === 401) return 'GITHUB_TOKENの有効期限を確認してください';
       if (status === 429) {
         const retryAfter = (error as { retryAfter?: number }).retryAfter
