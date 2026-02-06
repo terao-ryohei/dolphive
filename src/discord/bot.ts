@@ -41,6 +41,26 @@ const MEMORY_TRIGGER_WORDS = [
   'search for', 'find me', 'look for',
 ];
 
+const SAVE_TRIGGER_WORDS = [
+  '覚えといて', '覚えておいて', 'メモして', 'メモしといて',
+  '保存して', '記録して', '忘れないように',
+];
+
+function shouldSaveByKeyword(message: string): { shouldSave: boolean; reason: string } {
+  const trimmed = message.trim();
+  if (trimmed.startsWith('!save')) {
+    return { shouldSave: true, reason: '!saveコマンド検出' };
+  }
+
+  for (const trigger of SAVE_TRIGGER_WORDS) {
+    if (message.includes(trigger)) {
+      return { shouldSave: true, reason: `トリガー検出: ${trigger}` };
+    }
+  }
+
+  return { shouldSave: false, reason: 'キーワード未検出' };
+}
+
 /**
  * Check if message contains memory search trigger word
  */
@@ -289,7 +309,7 @@ export class MemoryBot {
     // 会話応答チャンネル判定（排他条件: コマンド/カテゴリは上で処理済み、GuildTextのみ）
     if (message.guild && message.channel.type === ChannelType.GuildText &&
         isChatChannel((message.channel as TextChannel).name, this.config.chatChannelIds, message.channel.id)) {
-      const decision = await this.aiClient.shouldSaveMemory(message.content);
+      const decision = shouldSaveByKeyword(message.content);
       if (decision.shouldSave) {
         console.log(`[KPI] chat_channel_save_trigger: ${decision.reason}`);
         await this.handleAutoSaveWithPreview(message);
@@ -468,6 +488,8 @@ export class MemoryBot {
    * 会話応答を処理
    */
   private async handleChatResponse(message: Message): Promise<void> {
+    let pending: Message | null = null;
+
     try {
       // クールダウン制御
       const now = Date.now();
@@ -477,10 +499,11 @@ export class MemoryBot {
       }
 
       console.log(`[KPI] chat_response_attempt channel:${message.channel.id}`);
+      pending = await message.reply('🐬 考え中...');
 
-      // 直近15メッセージを会話コンテキストとして取得
+      // 直近8メッセージを会話コンテキストとして取得
       const channel = message.channel as TextChannel;
-      const recentMessages = await channel.messages.fetch({ limit: 15, before: message.id });
+      const recentMessages = await channel.messages.fetch({ limit: 8, before: message.id });
       const conversationHistory: { role: 'user' | 'assistant'; content: string }[] = Array.from(recentMessages.values())
         .filter((m) => m.content)
         .reverse()
@@ -516,12 +539,15 @@ export class MemoryBot {
         relatedMemories,
       );
 
-      await message.reply(response.content);
+      await pending.edit(response.content);
       this.chatCooldowns.set(message.channel.id, Date.now());
 
       console.log(`[KPI] chat_response_success memories_used:${relatedMemories.length}`);
     } catch (error) {
       console.error('Chat response error:', error);
+      if (pending) {
+        await pending.edit('エラーが発生しました');
+      }
     }
   }
 

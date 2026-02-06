@@ -131,12 +131,6 @@ export class GitHubClient {
     message: string
   ): Promise<CreateFileResult> {
     this.apiCallCount++;
-    // 既存ファイルチェック
-    const exists = await this.fileExists(path);
-    if (exists) {
-      throw new Error(`File already exists: ${path}. Overwriting is not allowed.`);
-    }
-
     const response = await withRetry(() =>
       this.octokit.repos.createOrUpdateFileContents({
         owner: this.owner,

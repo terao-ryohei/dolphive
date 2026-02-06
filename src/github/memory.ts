@@ -6,6 +6,7 @@ import type {
   MemoryCategory,
   MemoryFrontmatter,
   CreateMemoryInput,
+  CreateFileResult,
   SavedMemory,
   SearchResult,
   GitHubClientConfig,
@@ -108,8 +109,9 @@ export class MemoryManager {
    * 新規保存は常に memory/{guildId}/{category}/ に書き込む
    */
   async saveMemory(input: CreateMemoryInput, guildId: string, authorId?: string): Promise<SavedMemory> {
+    const t0 = Date.now();
+    console.log(`[Perf] saveMemory start: ${t0}`);
     const date = new Date();
-    const filePath = this.generateFilePath(input.category, date, guildId);
     const frontmatter = this.createFrontmatter(input, date);
     if (authorId) {
       frontmatter.author_id = authorId;
@@ -117,9 +119,34 @@ export class MemoryManager {
     const markdown = this.formatMarkdown(frontmatter, input.content);
 
     const commitMessage = `Add ${input.category}: ${input.title}`;
-    const result = await this.client.createFile(filePath, markdown, commitMessage);
+    let createFileMs = 0;
+    let result: CreateFileResult | null = null;
+    let filePath = this.generateFilePath(input.category, date, guildId);
+    const maxCreateAttempts = 3;
+    for (let attempt = 1; attempt <= maxCreateAttempts; attempt++) {
+      const createStartedAt = Date.now();
+      try {
+        result = await this.client.createFile(filePath, markdown, commitMessage);
+        createFileMs += Date.now() - createStartedAt;
+        break;
+      } catch (error: unknown) {
+        createFileMs += Date.now() - createStartedAt;
+        const status = typeof error === 'object' && error !== null && 'status' in error
+          ? Number((error as { status: unknown }).status)
+          : null;
+        const shouldRetry = (status === 409 || status === 422) && attempt < maxCreateAttempts;
+        if (!shouldRetry) {
+          throw error;
+        }
+        filePath = this.generateFilePath(input.category, date, guildId);
+      }
+    }
 
-    await this.addToIndex(guildId, {
+    if (!result) {
+      throw new Error('Failed to create memory file after retries.');
+    }
+
+    const indexEntry: MemoryIndexEntry = {
       path: result.path,
       category: input.category,
       title: input.title,
@@ -127,9 +154,19 @@ export class MemoryManager {
       date: frontmatter.date,
       summary: input.summary,
       source: frontmatter.source,
-    });
+    };
+
+    const addToIndexStartAt = Date.now();
+    void this.addToIndex(guildId, indexEntry)
+      .then(() => {
+        console.log(`[Perf] saveMemory addToIndex_ms(async): ${Date.now() - addToIndexStartAt}ms`);
+      })
+      .catch((err) => {
+        console.error('[Index] async update failed:', err);
+      });
 
     this.clearIndexCache(guildId);
+    console.log(`[Perf] saveMemory total: ${Date.now() - t0}ms (createFile: ${createFileMs}ms, addToIndex: async)`);
 
     return {
       path: result.path,
@@ -279,9 +316,11 @@ export class MemoryManager {
   // ─── インデックス管理 ───
 
   private async getIndex(guildId: string): Promise<{ index: MemoryIndex; sha: string | null }> {
+    const t0 = Date.now();
     // Check cache first
     const cached = this.indexCache.get(guildId);
     if (cached && Date.now() - cached.cacheTime < this.CACHE_TTL_MS) {
+      console.log(`[Perf] getIndex: ${Date.now() - t0}ms (cache hit)`);
       return { index: cached.index, sha: cached.sha };
     }
 
@@ -293,6 +332,7 @@ export class MemoryManager {
         const index = JSON.parse(fileData.content) as MemoryIndex;
         if (index.version === INDEX_VERSION && Array.isArray(index.entries)) {
           this.indexCache.set(guildId, { index, sha: fileData.sha, cacheTime: Date.now() });
+          console.log(`[Perf] getIndex: ${Date.now() - t0}ms`);
           return { index, sha: fileData.sha };
         }
         // Version mismatch detected - rebuild with new schema
@@ -310,11 +350,13 @@ export class MemoryManager {
       const emptyIndex = createEmptyIndex();
       this.indexCache.set(guildId, { index: emptyIndex, sha: null, cacheTime: Date.now() });
       console.log(`[Performance] Empty repository detected for guild ${guildId}. Skipping rebuild.`);
+      console.log(`[Perf] getIndex: ${Date.now() - t0}ms`);
       return { index: emptyIndex, sha: null };
     }
 
     const rebuilt = await this.rebuildIndex(guildId);
     this.indexCache.set(guildId, { index: rebuilt.index, sha: rebuilt.sha, cacheTime: Date.now() });
+    console.log(`[Perf] getIndex: ${Date.now() - t0}ms`);
     return rebuilt;
   }
 
@@ -430,6 +472,8 @@ export class MemoryManager {
     guildId: string,
     categories?: MemoryCategory[]
   ): Promise<SearchResult[]> {
+    const t0 = Date.now();
+    console.log(`[Perf] searchMemories start: ${t0}`);
     const targetCategories = categories ?? ALL_CATEGORIES;
     const queryLower = query.toLowerCase();
 
@@ -469,6 +513,8 @@ export class MemoryManager {
       }
     }
 
+    const t1 = Date.now();
+    console.log(`[Perf] searchMemories end: ${t1} (duration: ${t1 - t0}ms)`);
     return results;
   }
 

@@ -56,6 +56,7 @@ export class AIClient {
           },
         ],
         temperature: 0.3,
+        max_tokens: 512,
       }),
     );
 
@@ -101,6 +102,7 @@ export class AIClient {
           },
         ],
         temperature: 0.1,
+        max_tokens: 64,
       }),
     );
 
@@ -132,12 +134,15 @@ export class AIClient {
       { role: 'user' as const, content: userMessage },
     ];
 
-    const response = await withRetry(() =>
-      this.client.chat.completions.create({
-        model: this.model,
-        messages,
-        temperature: 0.7,
-      }),
+    const response = await withRetry(
+      () =>
+        this.client.chat.completions.create({
+          model: this.model,
+          messages,
+          temperature: 0.7,
+          max_tokens: 256,
+        }),
+      { maxRetries: 2, initialDelayMs: 500 },
     );
 
     const content = response.choices[0]?.message?.content;
