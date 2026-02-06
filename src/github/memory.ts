@@ -13,7 +13,7 @@ import type {
 
 const MEMORY_BASE_PATH = 'memory';
 const ALL_CATEGORIES: MemoryCategory[] = ['daily', 'ideas', 'research', 'images', 'logs', 'schedule', 'tasks'];
-const INDEX_VERSION = 1;
+const INDEX_VERSION = 2;
 
 const locks = new Map<string, Promise<void>>();
 
@@ -40,6 +40,7 @@ type MemoryIndexEntry = {
   readonly tags: readonly string[];
   readonly date: string;
   readonly summary: string;
+  readonly source: 'discord';
 };
 
 type MemoryIndex = {
@@ -125,6 +126,7 @@ export class MemoryManager {
       tags: input.tags,
       date: frontmatter.date,
       summary: input.summary,
+      source: frontmatter.source,
     });
 
     this.clearIndexCache(guildId);
@@ -293,6 +295,8 @@ export class MemoryManager {
           this.indexCache.set(guildId, { index, sha: fileData.sha, cacheTime: Date.now() });
           return { index, sha: fileData.sha };
         }
+        // Version mismatch detected - rebuild with new schema
+        console.log(`[Index Migration] Detected index version ${index.version}, expected ${INDEX_VERSION}. Rebuilding index...`);
       } catch {
         // corrupted index, rebuild
       }
@@ -349,6 +353,7 @@ export class MemoryManager {
         tags: parsed.frontmatter.tags,
         date: parsed.frontmatter.date,
         summary: parsed.frontmatter.summary,
+        source: parsed.frontmatter.source,
       });
     }
 
@@ -438,16 +443,20 @@ export class MemoryManager {
 
     const results: SearchResult[] = [];
     for (const entry of matchedEntries) {
-      const fileData = await this.client.getFile(entry.path);
-      if (!fileData) continue;
-
-      const parsed = this.parseMarkdown(fileData.content);
-      if (!parsed) continue;
+      // Build SearchResult from index entry (no getFile needed)
+      const frontmatter: MemoryFrontmatter = {
+        title: entry.title,
+        date: entry.date,
+        tags: [...entry.tags],
+        source: entry.source,
+        type: entry.category,
+        summary: entry.summary,
+      };
 
       results.push({
         path: entry.path,
-        frontmatter: parsed.frontmatter,
-        content: parsed.content,
+        frontmatter,
+        content: '', // Content not needed for search results
       });
     }
 

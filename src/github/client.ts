@@ -2,6 +2,12 @@ import { Octokit } from '@octokit/rest';
 import type { GitHubClientConfig, CreateFileResult, FileInfo } from './types.js';
 import { withRetry } from '../utils/retry.js';
 
+type ETagCacheEntry = {
+  etag: string;
+  data: unknown;
+  cacheTime: number;
+};
+
 /**
  * GitHub APIクライアント
  * Contents APIを使用してファイルの作成・取得を行う
@@ -18,6 +24,10 @@ export class GitHubClient {
   // Tracks all content API calls (read and write operations)
   private apiCallCount: number = 0;
 
+  // ETag cache for reducing data transfer
+  private etagCache = new Map<string, ETagCacheEntry>();
+  private readonly ETAG_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
   constructor(config: GitHubClientConfig) {
     this.octokit = new Octokit({ auth: config.token });
     this.owner = config.owner;
@@ -33,6 +43,10 @@ export class GitHubClient {
 
   resetApiCallCount(): void {
     this.apiCallCount = 0;
+  }
+
+  private invalidateETagCache(path: string): void {
+    this.etagCache.delete(path);
   }
 
   async repoExists(): Promise<boolean> {
@@ -133,6 +147,9 @@ export class GitHubClient {
       }),
     );
 
+    // Invalidate cache for the created file
+    this.invalidateETagCache(path);
+
     return {
       path: response.data.content?.path ?? path,
       sha: response.data.commit.sha ?? '',
@@ -166,12 +183,21 @@ export class GitHubClient {
    */
   async getFile(path: string): Promise<{ content: string; sha: string } | null> {
     this.apiCallCount++;
+
+    // Check ETag cache
+    const cached = this.etagCache.get(path);
+    const headers: Record<string, string> = {};
+    if (cached && Date.now() - cached.cacheTime < this.ETAG_CACHE_TTL_MS) {
+      headers['if-none-match'] = cached.etag;
+    }
+
     try {
       const response = await withRetry(() =>
         this.octokit.repos.getContent({
           owner: this.owner,
           repo: this.repo,
           path,
+          headers,
         }),
       );
 
@@ -181,9 +207,23 @@ export class GitHubClient {
       }
 
       const content = Buffer.from(data.content, 'base64').toString('utf-8');
-      return { content, sha: data.sha };
+      const result = { content, sha: data.sha };
+
+      // Cache with ETag if available
+      const etag = response.headers.etag;
+      if (etag) {
+        this.etagCache.set(path, { etag, data: result, cacheTime: Date.now() });
+      }
+
+      return result;
     } catch (error) {
-      if (error instanceof Error && 'status' in error && error.status === 404) {
+      // Handle 304 Not Modified
+      if (error instanceof Error && 'status' in error && (error as { status: number }).status === 304) {
+        if (cached && cached.data) {
+          return cached.data as { content: string; sha: string };
+        }
+      }
+      if (error instanceof Error && 'status' in error && (error as { status: number }).status === 404) {
         return null;
       }
       throw error;
@@ -195,12 +235,21 @@ export class GitHubClient {
    */
   async listFiles(dirPath: string): Promise<FileInfo[]> {
     this.apiCallCount++;
+
+    // Check ETag cache
+    const cached = this.etagCache.get(dirPath);
+    const headers: Record<string, string> = {};
+    if (cached && Date.now() - cached.cacheTime < this.ETAG_CACHE_TTL_MS) {
+      headers['if-none-match'] = cached.etag;
+    }
+
     try {
       const response = await withRetry(() =>
         this.octokit.repos.getContent({
           owner: this.owner,
           repo: this.repo,
           path: dirPath,
+          headers,
         }),
       );
 
@@ -209,7 +258,7 @@ export class GitHubClient {
         return [];
       }
 
-      return data
+      const result = data
         .filter((item) => item.type === 'file')
         .map((item) => ({
           name: item.name,
@@ -218,8 +267,22 @@ export class GitHubClient {
           size: item.size,
           downloadUrl: item.download_url,
         }));
+
+      // Cache with ETag if available
+      const etag = response.headers.etag;
+      if (etag) {
+        this.etagCache.set(dirPath, { etag, data: result, cacheTime: Date.now() });
+      }
+
+      return result;
     } catch (error) {
-      if (error instanceof Error && 'status' in error && error.status === 404) {
+      // Handle 304 Not Modified
+      if (error instanceof Error && 'status' in error && (error as { status: number }).status === 304) {
+        if (cached && cached.data) {
+          return cached.data as FileInfo[];
+        }
+      }
+      if (error instanceof Error && 'status' in error && (error as { status: number }).status === 404) {
         return [];
       }
       throw error;
@@ -290,6 +353,9 @@ export class GitHubClient {
       }),
     );
 
+    // Invalidate cache for the updated file
+    this.invalidateETagCache(path);
+
     return {
       path: response.data.content?.path ?? path,
       sha: response.data.commit.sha ?? '',
@@ -311,5 +377,8 @@ export class GitHubClient {
         sha,
       }),
     );
+
+    // Invalidate cache for the deleted file
+    this.invalidateETagCache(path);
   }
 }
